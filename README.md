@@ -2,8 +2,6 @@
 
 Opinionated AI agent runtime for Node.js. Embed it in your app to run **tool-using agents** with modes, MCP, and streaming — not a thin chat-completions wrapper.
 
-> Need only completions? Use [Vercel AI SDK](https://sdk.vercel.ai/) or a provider SDK. Use Poyraz when the model must read/edit files, run commands, plan work, and respect tool policy.
-
 ## Install
 
 ```bash
