@@ -1,0 +1,40 @@
+# Dependency directories
+node_modules/
+
+# Build artifacts
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Workspace-local Poyraz state
+.poyraz/
+
+# Eval generated output
+evals/history/
+evals/results/
+evals/reports/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+PMAP.md
+.cursor/

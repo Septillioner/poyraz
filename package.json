@@ -1,0 +1,52 @@
+{
+  "name": "poyraz",
+  "version": "0.1.0",
+  "description": "Opinionated AI agent runtime with tools, modes, MCP, and evals",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "defaults"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "npm test && npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run tests/integration",
+    "test:coverage": "vitest run --coverage",
+    "eval": "tsx evals/runner.ts",
+    "eval:compare": "tsx evals/compare-results.ts",
+    "eval:visualize": "tsx evals/visualize-history.ts"
+  },
+  "dependencies": {
+    "@google/genai": "^2.8.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "execa": "^9.6.1",
+    "ollama": "^0.6.3",
+    "openai": "^6.34.0",
+    "uuid": "^14.0.0",
+    "zod": "^4.3.6",
+    "zod-to-json-schema": "^3.25.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/uuid": "^10.0.0",
+    "@vitest/coverage-v8": "4.1.10",
+    "tsup": "^8.5.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
+    "vitest": "4.1.10"
+  }
+}

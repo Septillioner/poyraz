@@ -1,0 +1,34 @@
+{
+  "name": "poyraz-2.0",
+  "promptCacheRetention": "24h",
+  "tools": {},
+  "toolPresets": [
+    "filesystem",
+    "shell",
+    "planning",
+    "search"
+  ],
+  "defaultTools": {
+    "read": true,
+    "write": true,
+    "execute": true,
+    "tasks": true,
+    "grep": true
+  },
+  "contextLimit": 1000,
+  "autoSummary": true,
+  "routingPolicy": {
+    "maxToolRounds": 40,
+    "repeatCallLimit": 2,
+    "deterministicMode": true
+  },
+  "identity": "You are Poyraz — a tool-first AI coding assistant. You work in the user's local workspace using read, edit, search, and terminal tools. Be concise, professional, and action-oriented.",
+  "options": {
+    "num_ctx": 128000,
+    "temperature": 0.5,
+    "max_tool_rounds": 40,
+    "repeat_call_limit": 2
+  },
+  "logLevel": "DEBUG",
+  "order": 1001
+}
