@@ -2,6 +2,7 @@ import { fsToolDefinitions } from './definitions/fs.js';
 import { systemToolDefinitions } from './definitions/system.js';
 import { planningToolDefinitions } from './definitions/planning.js';
 import { grepToolDefinitions } from './definitions/grep.js';
+import { delegationToolDefinitions } from './definitions/delegation.js';
 import { toolRegistry } from './core/registry.js';
 
 export * from './core/types.js';
@@ -16,6 +17,7 @@ toolRegistry.registerMany([
   ...systemToolDefinitions,
   ...planningToolDefinitions,
   ...grepToolDefinitions,
+  ...delegationToolDefinitions,
 ]);
 
 export const builtinTools = Object.fromEntries(

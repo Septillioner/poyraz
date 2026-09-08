@@ -119,6 +119,18 @@ export const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
     category: 'file',
     summarizeArgs: (args) => args.pattern as string | undefined,
   },
+  delegate_task: {
+    label: 'Delegating Task',
+    runningLabel: 'Delegating to subagent',
+    icon: 'ListTodo',
+    category: 'planning',
+    summarizeArgs: (args) => {
+      const task = args.task;
+      if (typeof task !== 'string' || !task.trim()) return undefined;
+      const oneLine = task.replace(/\s+/g, ' ').trim();
+      return oneLine.length > 120 ? `${oneLine.slice(0, 120)}...` : oneLine;
+    },
+  },
 };
 
 export function withPresentation(name: string, presentation?: Partial<ToolPresentation>): ToolPresentation {

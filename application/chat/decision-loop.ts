@@ -75,6 +75,11 @@ export interface DecisionLoopHandlers {
   signal?: AbortSignal;
   /** Agent-mode completion gate: current todo snapshot for this session. */
   getTodoSnapshot?: () => Promise<TodoSnapshot>;
+  /**
+   * When the model is about to return a final text answer, wait for any running
+   * background subagent, inject its result, and return true to continue the loop.
+   */
+  waitForSubagentIfNeeded?: () => Promise<boolean>;
 }
 
 function parseToolCallArgs(rawArgs: unknown): Record<string, unknown> {
@@ -270,6 +275,14 @@ export async function runDecisionLoop(
               todoContinuationCount,
             });
             handlers.addMessage({ role: 'user', content: notice });
+            continue;
+          }
+        }
+
+        if (handlers.waitForSubagentIfNeeded) {
+          const injected = await handlers.waitForSubagentIfNeeded();
+          if (injected) {
+            logger.info('Subagent finalization gate: synthesizing with injected result');
             continue;
           }
         }

@@ -1,20 +1,39 @@
 import { z } from 'zod';
-import type { Agent } from '../../application/agent/agent.js';
 import { logger } from '../../shared/logger.js';
-import type { AgentError } from '../../domain/llm.js';
+import type { AgentError, TokenUsage } from '../../domain/llm.js';
+import type { ModelProfile } from '../../domain/model-profile.js';
 
 export interface LastReadFileState {
   path: string;
   lineCount: number;
 }
 
+export interface DelegateTaskResult {
+  content: string;
+  usage: TokenUsage;
+  modelProfile: ModelProfile;
+}
+
+/** Immediate ack returned when a background subagent starts. */
+export interface DelegateTaskStartResult {
+  taskId: string;
+  status: 'running';
+  model: string;
+  content: string;
+}
+
+/** Opaque host handle — avoid importing Agent (breaks tools ↔ agent cycle under Vitest). */
+export type ToolHostAgent = object;
+
 export interface ToolContext {
-  agent?: Agent;
+  agent?: ToolHostAgent;
   logger?: typeof logger;
   sessionId?: string;
   abortSignal?: AbortSignal;
   refreshSystemPrompt?: () => void;
   lastReadFile?: LastReadFileState;
+  /** Starts one background subagent and returns immediately. */
+  delegateTask?: (task: string) => Promise<DelegateTaskStartResult>;
 }
 
 export type ToolCategory =

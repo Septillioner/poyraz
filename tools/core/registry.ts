@@ -8,6 +8,7 @@ export const TOOL_PRESETS = {
   shell: ['run_terminal_cmd'],
   planning: ['todo_write'],
   search: ['grep'],
+  delegation: ['delegate_task'],
 } as const;
 
 export type ToolPresetName = keyof typeof TOOL_PRESETS;

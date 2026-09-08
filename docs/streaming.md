@@ -30,6 +30,16 @@ const handlers: ChatHandlers = {
       case 'tool.call.result':
         showToolResult(event.toolName, event.ok, event.content);
         break;
+      case 'subagent.task.started':
+      case 'subagent.task.progress':
+      case 'subagent.task.completed':
+      case 'subagent.task.failed':
+      case 'subagent.task.cancelled':
+      case 'subagent.task.injected':
+      case 'subagent.tool.start':
+      case 'subagent.tool.result':
+        // Background subagent lifecycle — see docs/subagents.md
+        break;
     }
   },
 };
@@ -59,5 +69,15 @@ ac.abort();
 | `tool.call.start` | `toolCallId`, `toolName`, `args` | Tool about to run |
 | `tool.call.end` | `toolCallId` | Tool execution finished |
 | `tool.call.result` | `toolCallId`, `toolName`, `content`, `ok`, `error?`, `meta?` | Tool output |
+| `subagent.task.started` | `taskId`, `model`, `taskPreview`, `startedAt` | Background child started |
+| `subagent.task.progress` | `taskId`, `phase`, `toolName?`, `toolDetail?` | Child progress (no raw deltas) |
+| `subagent.task.completed` | `taskId`, `model`, `durationMs`, `usage` | Child finished successfully |
+| `subagent.task.failed` | `taskId`, `model`, `durationMs`, `error` | Child failed |
+| `subagent.task.cancelled` | `taskId`, `model`, `durationMs`, `reason?` | Child cancelled |
+| `subagent.task.injected` | `taskId` | Pending notice flushed into parent context |
+| `subagent.tool.start` | `taskId`, `toolCallId`, `toolName`, `args` | Child tool start (verbose UIs) |
+| `subagent.tool.result` | `taskId`, `toolCallId`, `toolName`, `ok`, `preview` | Child tool result (verbose UIs) |
+
+`agent.subscribeSubagentEvents(listener)` receives the same subagent events across parent turns (useful when the child outlives a single `chat()` call).
 
 `emitEvent(handlers, event)` is available if you build a custom loop that reuses the same event shape.

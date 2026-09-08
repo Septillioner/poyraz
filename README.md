@@ -41,6 +41,7 @@ Supported providers: OpenAI, Groq, Gemini, OpenRouter, Ollama.
 | Streaming | Token and tool events for your UI | [Streaming](docs/streaming.md) |
 | MCP | Attach stdio/HTTP MCP servers as tools | [MCP](docs/mcp.md) |
 | Templates | JSON personas (`poyraz-2.0` and your own) | [Templates](docs/templates.md) |
+| Subagents | Cheaper `delegate_task` workers when `SUBAGENT_MODEL` is set | [Subagents](docs/subagents.md) |
 
 ## Documentation
 
@@ -54,6 +55,7 @@ Supported providers: OpenAI, Groq, Gemini, OpenRouter, Ollama.
 | [Auth and providers](docs/auth-and-providers.md) | API keys, profiles, `~/.poyraz` |
 | [MCP](docs/mcp.md) | Config, connect, merge tools |
 | [Templates](docs/templates.md) | Bundled and custom templates |
+| [Subagents](docs/subagents.md) | `delegate_task` and `SUBAGENT_MODEL` |
 | [Workspace](docs/workspace.md) | Project `.poyraz/`, trust, logs |
 | [Streaming](docs/streaming.md) | Events and cancellation |
 | [Custom tools](docs/custom-tools.md) | Add your own tools |

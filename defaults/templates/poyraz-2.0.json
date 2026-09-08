@@ -6,7 +6,8 @@
     "filesystem",
     "shell",
     "planning",
-    "search"
+    "search",
+    "delegation"
   ],
   "defaultTools": {
     "read": true,

@@ -7,10 +7,12 @@ import {
   resolveApiKeyForProfile,
 } from '../../domain/model-profile.js';
 import { toolRegistry } from '../../tools/core/registry.js';
+// Side-effect: register built-in tools before resolveAgentTools reads the registry.
+import '../../tools/index.js';
 import { MCP_TOOL_PREFIX } from '../../infrastructure/mcp/mcp-tool-bridge.js';
 import type { ToolContext } from '../../tools/core/types.js';
 import type { ToolDefinition } from '../../tools/core/types.js';
-import type { ChatHandlers } from '../../domain/events.js';
+import type { AgentStreamEvent, ChatHandlers } from '../../domain/events.js';
 import { createMessageContext } from '../context/message-context.js';
 import { applyContextManagement, summarizeHistory } from '../context/summarizer.js';
 import { createTokenStats } from '../stats/token-stats.js';
@@ -40,6 +42,11 @@ import {
   type AgentMode,
 } from '../../domain/agent-mode.js';
 import type { TodoSnapshot } from '../../domain/task.js';
+import {
+  DELEGATE_TASK_TOOL_NAME,
+  isSubagentModelConfigured,
+} from '../services/subagent-constants.js';
+import { SubagentJobManager } from '../services/subagent-job-manager.js';
 
 export type { AgentConfig };
 
@@ -61,7 +68,10 @@ export class Agent {
   private historyLoaded = false;
   private chatLogSource: ChatDebugLogSource = 'cli';
   private activeAbortSignal?: AbortSignal;
+  private activeChatOnEvent?: (event: AgentStreamEvent) => void;
+  private readonly subagentEventListeners = new Set<(event: AgentStreamEvent) => void>();
   private readonly toolContext: ToolContext = {};
+  private readonly subagentJobs = new SubagentJobManager();
   /** Cached <current_todos> block; refreshed before rounds. */
   private currentTodosBlock = '';
 
@@ -100,11 +110,91 @@ export class Agent {
 
     this.baseTools = resolveAgentTools(config);
     this.tools = {};
-    this.applyMode();
+    this.syncDelegationTool();
 
     if (config.logLevel !== undefined) {
       logger.setLevel(config.logLevel);
     }
+  }
+
+  /**
+   * Adds or removes `delegate_task` from the live tool set based on SUBAGENT_MODEL.
+   * Call after changing process.env so delegation works without restarting the process.
+   */
+  syncDelegationTool(): void {
+    const shouldHave =
+      isSubagentModelConfigured() && this.templateAllowsDelegationTool();
+
+    if (!shouldHave) {
+      if (this.subagentJobs.isRunning()) {
+        this.subagentJobs.cancel('subagent model cleared');
+      }
+      if (this.subagentJobs.isBusy() || this.subagentJobs.isRunning()) {
+        this.subagentJobs.reset();
+      }
+      if (!this.baseTools[DELEGATE_TASK_TOOL_NAME]) return;
+      delete this.baseTools[DELEGATE_TASK_TOOL_NAME];
+      this.applyMode();
+      this.rebuildSystemPrompt();
+      return;
+    }
+
+    if (!this.baseTools[DELEGATE_TASK_TOOL_NAME]) {
+      const def =
+        resolveAgentTools(this.config)[DELEGATE_TASK_TOOL_NAME] ??
+        toolRegistry.get(DELEGATE_TASK_TOOL_NAME);
+      if (!def) return;
+      this.baseTools[DELEGATE_TASK_TOOL_NAME] = def;
+    }
+
+    this.applyMode();
+    this.rebuildSystemPrompt();
+  }
+
+  getSubagentJobStatus() {
+    return this.subagentJobs.getSnapshot();
+  }
+
+  cancelActiveSubagent(reason = 'cancelled by parent'): void {
+    this.subagentJobs.cancel(reason);
+  }
+
+  /**
+   * Persistent listener for background subagent lifecycle events.
+   * Survives parent chat turns so the CLI can show progress while idle.
+   */
+  subscribeSubagentEvents(listener: (event: AgentStreamEvent) => void): () => void {
+    this.subagentEventListeners.add(listener);
+    return () => {
+      this.subagentEventListeners.delete(listener);
+    };
+  }
+
+  private emitSubagentEvent(event: AgentStreamEvent): void {
+    this.activeChatOnEvent?.(event);
+    for (const listener of this.subagentEventListeners) {
+      listener(event);
+    }
+  }
+
+  private flushSubagentPending(onEvent?: (event: AgentStreamEvent) => void): boolean {
+    const flushed = this.subagentJobs.flushPending();
+    if (!flushed) return false;
+    this.context.addMessage({ role: 'user', content: flushed.notice });
+    const injected: AgentStreamEvent = { type: 'subagent.task.injected', taskId: flushed.taskId };
+    onEvent?.(injected);
+    for (const listener of this.subagentEventListeners) {
+      listener(injected);
+    }
+    return true;
+  }
+
+  private templateAllowsDelegationTool(): boolean {
+    if (this.config.excludeTools?.includes(DELEGATE_TASK_TOOL_NAME)) return false;
+    if (this.config.tools && Object.keys(this.config.tools).length > 0) {
+      return Boolean(this.config.tools[DELEGATE_TASK_TOOL_NAME]);
+    }
+    return Boolean(resolveAgentTools(this.config)[DELEGATE_TASK_TOOL_NAME]);
   }
 
   private applyMode(): void {
@@ -229,6 +319,11 @@ export class Agent {
     this.stats.setSessionTotal(usage);
   }
 
+  /** Rolls delegated/subagent provider usage into this agent's session and current totals. */
+  recordExternalUsage(usage: TokenUsage): void {
+    this.stats.addUsage(usage);
+  }
+
   getName() {
     return this.name;
   }
@@ -306,6 +401,9 @@ export class Agent {
     this.context.addMessage({ role: 'user', content: userInput });
     this.stats.resetCurrent();
     this.activeAbortSignal = handlers?.signal;
+    this.activeChatOnEvent = handlers?.onEvent;
+    // Re-link so Ctrl+C on this turn cancels a still-running background child.
+    this.subagentJobs.attachParentSignal(handlers?.signal);
 
     logger.info('User message received', { agent: this.name, input: userInput });
 
@@ -313,6 +411,8 @@ export class Agent {
     let chatError: string | undefined;
 
     try {
+      // Flush any background result that finished between turns.
+      this.flushSubagentPending(handlers?.onEvent);
       await this.refreshCurrentTodosBlock();
       this.rebuildSystemPrompt();
 
@@ -342,8 +442,18 @@ export class Agent {
           signal: handlers?.signal,
           getTodoSnapshot: () => this.getTodoSnapshot(),
           onBeforeRound: async () => {
+            this.flushSubagentPending(handlers?.onEvent);
             await this.refreshCurrentTodosBlock();
             this.rebuildSystemPrompt();
+          },
+          waitForSubagentIfNeeded: async () => {
+            if (!this.subagentJobs.isRunning() && !this.subagentJobs.hasPendingFlush()) {
+              return false;
+            }
+            if (this.subagentJobs.isRunning()) {
+              await this.subagentJobs.waitUntilSettled();
+            }
+            return this.flushSubagentPending(handlers?.onEvent);
           },
         }
       );
@@ -358,11 +468,18 @@ export class Agent {
       result = { content: loopResult.content, usage: this.stats.getCurrent() };
       return result;
     } catch (error: any) {
+      if (handlers?.signal?.aborted) {
+        this.subagentJobs.cancel('parent aborted');
+        this.flushSubagentPending(handlers?.onEvent);
+      }
       chatError = error.message;
       logger.error('Chat error', { error: error.message });
       throw error;
     } finally {
       this.activeAbortSignal = undefined;
+      this.activeChatOnEvent = undefined;
+      // Keep the child running across turns; only explicit abort cancels it.
+      this.subagentJobs.attachParentSignal(undefined);
       void writeChatDebugLog({
         timestamp: new Date().toISOString(),
         source: this.chatLogSource,
@@ -386,6 +503,16 @@ export class Agent {
     this.toolContext.refreshSystemPrompt = () => {
       this.rebuildSystemPrompt();
     };
+    this.toolContext.delegateTask = isSubagentModelConfigured()
+      ? async (task: string) =>
+          this.subagentJobs.start({
+            task,
+            createAgent: (config) => new Agent(config),
+            parentSignal: this.activeAbortSignal,
+            onEvent: (event) => this.emitSubagentEvent(event),
+            onUsage: (usage) => this.recordExternalUsage(usage),
+          })
+      : undefined;
     return this.toolContext;
   }
 }

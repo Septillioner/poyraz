@@ -25,6 +25,7 @@ export type { UsageBreakdown, MessageContext } from './application/context/messa
 export type {
   AgentStreamEvent,
   LifecyclePhase,
+  SubagentTaskPhase,
   ChatHandlers,
 } from './domain/events.js';
 export { emitEvent } from './domain/events.js';
@@ -95,6 +96,37 @@ export type {
 } from './application/services/list-chat-models.js';
 export { fetchModelInfo, fetchModelInfoForId } from './application/services/model-info.js';
 export type { ModelInfo } from './application/services/model-info.js';
+
+export {
+  DELEGATE_TASK_TOOL_NAME,
+  SUBAGENT_MAX_TOOL_ROUNDS,
+  SUBAGENT_MODEL_ENV,
+  SUBAGENT_READ_ONLY_TOOLS,
+  isSubagentModelConfigured,
+  readSubagentModelId,
+} from './application/services/subagent-constants.js';
+export {
+  buildSubagentConfig,
+  runSubagentTask,
+} from './application/services/subagent-runner.js';
+export type {
+  SubagentChatCapable,
+  SubagentRunResult,
+  SubagentRunnerOptions,
+} from './application/services/subagent-runner.js';
+export { SubagentJobManager } from './application/services/subagent-job-manager.js';
+export type {
+  DelegateTaskStartResult,
+  SubagentJobPhase,
+  SubagentJobSnapshot,
+  SubagentJobStartOptions,
+} from './application/services/subagent-job-manager.js';
+export {
+  buildSubagentCancelledNotice,
+  buildSubagentCompletionNotice,
+  buildSubagentFailureNotice,
+  previewSubagentContent,
+} from './application/chat/subagent-result-gate.js';
 
 export { taskRepository } from './infrastructure/persistence/task-repository.js';
 export {

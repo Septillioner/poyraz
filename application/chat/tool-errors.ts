@@ -6,6 +6,7 @@ export const TOOL_ERROR_CODES = {
   missingRequiredArg: 'MISSING_REQUIRED_ARG',
   policyBlocked: 'POLICY_BLOCKED',
   executionError: 'EXECUTION_ERROR',
+  configurationError: 'CONFIGURATION_ERROR',
 } as const;
 
 export function createToolError(code: string, message: string, details?: unknown): AgentError {
