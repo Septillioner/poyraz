@@ -2,10 +2,6 @@ import type { ToolDefinition } from '../../tools/core/types.js';
 import { toolRegistry, type ToolPresetName } from '../../tools/core/registry.js';
 import type { AgentConfig } from './config.js';
 
-function allRegisteredTools(): Record<string, ToolDefinition> {
-  return Object.fromEntries(toolRegistry.list().map((def) => [def.name, def]));
-}
-
 export function resolveAgentTools(config: AgentConfig): Record<string, ToolDefinition> {
   if (config.tools && Object.keys(config.tools).length > 0) {
     return { ...config.tools };
@@ -19,7 +15,7 @@ export function resolveAgentTools(config: AgentConfig): Record<string, ToolDefin
     });
   }
 
-  return allRegisteredTools();
+  return {};
 }
 
 export function resolveMaxToolRounds(config: AgentConfig): number {

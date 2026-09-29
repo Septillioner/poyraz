@@ -26,7 +26,6 @@ export const DEFAULT_SUBAGENT_POLICY: AgentPolicy = {
   allowedTools: [...SUBAGENT_READ_ONLY_TOOLS],
   hardBlockDeniedTools: true,
   enforceOpenTodos: false,
-  directive: 'Read-only research subagent. Do not edit files or run commands.',
 };
 
 export interface SubagentChatCapable {
@@ -68,7 +67,7 @@ export function buildSubagentConfig(
     apiKey,
     includeTools: [...SUBAGENT_READ_ONLY_TOOLS],
     excludeTools: [DELEGATE_TASK_TOOL_NAME],
-    identity: SUBAGENT_IDENTITY,
+    systemPrompt: SUBAGENT_IDENTITY,
     contextLimit: 40,
     autoSummary: false,
     policy: policy ?? DEFAULT_SUBAGENT_POLICY,

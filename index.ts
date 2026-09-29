@@ -3,7 +3,7 @@ export { AgentBuilder } from './application/agent/agent-builder.js';
 export type { AgentTemplate, AgentDelegationConfig } from './application/agent/config.js';
 export type { ToolRoutingPolicy } from './application/chat/tool-policy.js';
 
-export { buildSystemPrompt } from './application/prompt/system-prompt.js';
+export { buildSystemPrompt, BASE_PROMPT } from './application/prompt/system-prompt.js';
 export type { BuiltSystemPrompt } from './application/prompt/system-prompt.js';
 
 export {
@@ -16,7 +16,12 @@ export {
 } from './domain/agent-policy.js';
 
 export { createMessageContext } from './application/context/message-context.js';
-export type { UsageBreakdown, MessageContext } from './application/context/message-context.js';
+export type { MessageContext } from './application/context/message-context.js';
+
+export {
+  SUMMARY_MESSAGE_PREFIX,
+  isSummaryMessage,
+} from './application/context/summarizer.js';
 
 export type {
   AgentStreamEvent,

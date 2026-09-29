@@ -7,7 +7,7 @@ import { AgentBuilder, type AgentTemplate } from 'poyraz';
 
 const template: AgentTemplate = {
   name: 'researcher',
-  identity: 'You research codebases thoroughly.',
+  systemPrompt: 'You research codebases thoroughly.',
   toolPresets: ['filesystem', 'search'],
   contextLimit: 200,
   autoSummary: true,

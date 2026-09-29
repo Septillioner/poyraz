@@ -66,7 +66,7 @@ describe('decision-loop tool error recovery', () => {
     agentPolicy: AgentPolicy = DEFAULT_AGENT_POLICY
   ) {
     const llm = provider ?? mockLLM(steps);
-    const messageContext = createMessageContext({ limit: 50, autoSummary: false, totalCapacity: 128000 });
+    const messageContext = createMessageContext({ limit: 50 });
     messageContext.addMessage({ role: 'user', content: 'edit the file' });
 
     const policyGuard = createToolPolicyGuard({

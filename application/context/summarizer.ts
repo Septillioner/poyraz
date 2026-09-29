@@ -1,8 +1,46 @@
 import type { ChatHandlers } from '../../domain/events.js';
 import { emitEvent } from '../../domain/events.js';
-import type { LLMProvider } from '../../domain/llm.js';
+import type { ChatMessage, LLMProvider } from '../../domain/llm.js';
 import { logger } from '../../shared/logger.js';
 import type { MessageContext } from './message-context.js';
+
+export const SUMMARY_MESSAGE_PREFIX = 'Önceki konuşmaların özeti:';
+
+const TOOL_RESULT_MAX_CHARS = 200;
+
+export function isSummaryMessage(message: ChatMessage): boolean {
+  return (
+    message.role === 'user' &&
+    typeof message.content === 'string' &&
+    message.content.startsWith(SUMMARY_MESSAGE_PREFIX)
+  );
+}
+
+function compactMessageForSummary(message: ChatMessage): string | null {
+  if (message.role === 'system') return null;
+
+  if (isSummaryMessage(message)) {
+    return message.content;
+  }
+
+  if (message.role === 'tool') {
+    const body = String(message.content ?? '').slice(0, TOOL_RESULT_MAX_CHARS);
+    return `[tool] ${body}`;
+  }
+
+  if (message.role === 'user' || message.role === 'assistant') {
+    return `[${message.role}] ${message.content ?? ''}`;
+  }
+
+  return null;
+}
+
+function formatSummaryInput(messages: ChatMessage[]): string {
+  return messages
+    .map(compactMessageForSummary)
+    .filter((line): line is string => Boolean(line))
+    .join('\n\n');
+}
 
 export async function applyContextManagement(
   context: MessageContext,
@@ -32,6 +70,11 @@ export async function summarizeHistory(
 ): Promise<void> {
   const { toSummarize, keepIndex } = context.getMessagesToSummarize();
 
+  if (toSummarize.length === 0) {
+    logger.debug('Nothing to summarize');
+    return;
+  }
+
   logger.info('Summarizing history', {
     messageCount: toSummarize.length,
     keepIndex,
@@ -45,7 +88,7 @@ export async function summarizeHistory(
     `ÖNEMLİ KARARLAR: (kullanıcının verdiği kararlar, tercihler)\n` +
     `DEVAM EDEN İŞLER: (yarım kalan veya takip gereken şeyler)\n\n` +
     `Gereksiz detay, hata mesajı tekrarı ve sohbet selamlaşması ekleme.\n\n` +
-    `Konuşma:\n${JSON.stringify(toSummarize)}`;
+    `Konuşma:\n${formatSummaryInput(toSummarize)}`;
 
   try {
     const response = await provider.chat({
@@ -53,16 +96,21 @@ export async function summarizeHistory(
       messages: [{ role: 'user', content: summaryPrompt }],
     });
 
-    const summaryMessage = {
-      role: 'system',
-      content: `Önceki konuşmaların özeti: ${response.content}`,
+    const summaryMessage: ChatMessage = {
+      role: 'user',
+      content: `${SUMMARY_MESSAGE_PREFIX} ${response.content}`,
     };
 
     const messages = context.getMessages();
-    const systemMessage = messages[0];
+    const hasSystem = messages.length > 0 && messages[0].role === 'system';
     const recentMessages = messages.slice(keepIndex);
 
-    context.setMessages([systemMessage, summaryMessage, ...recentMessages]);
+    if (hasSystem) {
+      context.setMessages([messages[0], summaryMessage, ...recentMessages]);
+    } else {
+      context.setMessages([summaryMessage, ...recentMessages]);
+    }
+
     emitEvent(handlers, { type: 'lifecycle', phase: 'summarized' });
     logger.info('History summarized and updated', {
       newMessageCount: context.getMessages().length,

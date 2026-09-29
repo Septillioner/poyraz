@@ -8,6 +8,8 @@ Requires Node.js **>= 20**.
 
 ## Minimal agent
 
+Name + model profile + API key yields a bare chat model (no tools, no system message). Add `.SystemPrompt(...)` and tools explicitly when you need them.
+
 ```ts
 import { AgentBuilder, openAiProfile, resolveApiKeyForProfile } from 'poyraz';
 

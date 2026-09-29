@@ -96,7 +96,6 @@ function policyForEvalMode(mode: NonNullable<EvalScenario['mode']>): AgentPolicy
       deniedToolReason: DENIED_READ_ONLY,
       perTurnToolLimits: { todo_write: 1 },
       enforceOpenTodos: false,
-      directive: 'Active mode: PLAN. Read-only exploration; do not implement.',
     };
   }
   if (mode === 'ask') {
@@ -106,7 +105,6 @@ function policyForEvalMode(mode: NonNullable<EvalScenario['mode']>): AgentPolicy
       hardBlockDeniedTools: true,
       deniedToolReason: DENIED_READ_ONLY,
       enforceOpenTodos: false,
-      directive: 'Active mode: ASK. Read-only answers only.',
     };
   }
   if (mode === 'chat') {
@@ -116,15 +114,26 @@ function policyForEvalMode(mode: NonNullable<EvalScenario['mode']>): AgentPolicy
       hardBlockDeniedTools: true,
       deniedToolReason: DENIED_READ_ONLY,
       enforceOpenTodos: false,
-      directive: 'Active mode: CHAT. No tools.',
     };
   }
   return {
     id: 'agent',
     allowedTools: 'all',
     enforceOpenTodos: true,
-    directive: 'Active mode: AGENT. Use tools to complete the task.',
   };
+}
+
+function systemPromptForEvalMode(mode: NonNullable<EvalScenario['mode']>): string {
+  if (mode === 'plan') {
+    return 'Active mode: PLAN. Read-only exploration; do not implement.';
+  }
+  if (mode === 'ask') {
+    return 'Active mode: ASK. Read-only answers only.';
+  }
+  if (mode === 'chat') {
+    return 'Active mode: CHAT. No tools.';
+  }
+  return 'Active mode: AGENT. Use tools to complete the task.';
 }
 
 function resolveEvalProfile(model: string): ModelProfile {
@@ -240,18 +249,25 @@ async function runScenario(scenario: EvalScenario, model: string): Promise<Scena
     const apiKey = resolveApiKeyForProfile(profile, providerKeysFromProcess());
     const provider = createLLMProvider(profile, apiKey);
 
-    const agent = new AgentBuilder()
+    const agentBuilder = new AgentBuilder()
       .Name('EvalAgent')
       .Provider(provider)
       .WithModelProfile(profile)
       .ApiKey(apiKey)
       .DefaultSystemTools({ read: true, write: true, execute: false, tasks: true, grep: true })
-      .RoutingPolicy({ maxToolRounds: 15, repeatCallLimit: 3, deterministicMode: true })
-      .Build();
+      .RoutingPolicy({ maxToolRounds: 15, repeatCallLimit: 3, deterministicMode: true });
+
+    if (scenario.mode) {
+      agentBuilder.SystemPrompt(systemPromptForEvalMode(scenario.mode));
+    }
+
+    const agent = agentBuilder.Build();
 
     if (scenario.mode) {
       agent.setPolicy(policyForEvalMode(scenario.mode));
     }
+
+    await agent.init();
 
     const result = await agent.chat(scenario.prompt, {
       onEvent: (event) => events.push(event),

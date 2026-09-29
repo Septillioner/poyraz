@@ -17,7 +17,8 @@ export interface AgentDelegationConfig {
 export interface AgentConfig {
   model?: string;
   host?: string;
-  identity?: string;
+  /** Full system message content. Empty/omitted → no system message. */
+  systemPrompt?: string;
   workflow?: string;
   rules?: string[];
   tools?: Record<string, ToolDefinition>;
@@ -36,7 +37,7 @@ export interface AgentConfig {
   routingPolicy?: Partial<ToolRoutingPolicy>;
   /** Injected todo persistence; defaults to in-memory when omitted. */
   todoStore?: TodoStore;
-  /** Active behavioral policy (tool allow-list, gates, directives). */
+  /** Active behavioral policy (tool allow-list, gates). */
   policy?: AgentPolicy;
   /** When set, enables delegate_task with this child profile/key. */
   delegation?: AgentDelegationConfig;
@@ -45,7 +46,7 @@ export interface AgentConfig {
 export interface AgentTemplate {
   name: string;
   order?: number;
-  identity?: string;
+  systemPrompt?: string;
   workflow?: string;
   rules?: string[];
   toolPresets?: ToolPresetName[];

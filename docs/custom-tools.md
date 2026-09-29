@@ -46,7 +46,7 @@ Second argument to `execute`:
 - `agent` — owning agent when wired
 - `sessionId` — session id
 - `abortSignal` — turn abort
-- `logger`, `refreshSystemPrompt`, `lastReadFile`
+- `logger`, `lastReadFile`
 
 ## Register vs add
 

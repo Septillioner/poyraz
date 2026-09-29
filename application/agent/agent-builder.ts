@@ -4,7 +4,7 @@ import type { AgentPolicy } from '../../domain/agent-policy.js';
 import type { TodoStore } from '../../domain/todo-store.js';
 import type { ModelProfile } from '../../domain/model-profile.js';
 import { ToolDefinition } from '../../tools/index.js';
-import { toolRegistry, ToolPresetName, TOOL_PRESETS } from '../../tools/core/registry.js';
+import { toolRegistry, ToolPresetName } from '../../tools/core/registry.js';
 import { LogLevel } from '../../shared/logger.js';
 import type { LLMProvider } from '../../domain/llm.js';
 import type { ToolRoutingPolicy } from '../chat/tool-policy.js';
@@ -124,8 +124,8 @@ export class AgentBuilder {
     return this;
   }
 
-  Identity(identity: string): this {
-    this.config.identity = identity;
+  SystemPrompt(text: string): this {
+    this.config.systemPrompt = text;
     return this;
   }
 
@@ -179,7 +179,7 @@ export class AgentBuilder {
     if (json.contextLimit) this.ContextLimit(json.contextLimit);
     if (json.autoSummary !== undefined) this.AutoSummary(json.autoSummary);
     if (json.remoteContextUrl) this.RemoteContext(json.remoteContextUrl);
-    if (json.identity) this.Identity(json.identity);
+    if (json.systemPrompt) this.SystemPrompt(json.systemPrompt);
     if (json.promptCacheRetention) this.config.promptCacheRetention = json.promptCacheRetention;
     if (json.options) this.Options(json.options);
     if (json.routingPolicy) this.RoutingPolicy(json.routingPolicy);
@@ -231,7 +231,7 @@ export class AgentBuilder {
         exclude: this.excludeTools,
       });
     } else {
-      this.config.toolPresets = Object.keys(TOOL_PRESETS) as ToolPresetName[];
+      this.config.tools = {};
     }
 
     this.toolsFinalized = true;

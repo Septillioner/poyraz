@@ -16,7 +16,7 @@ import {
 
 Fluent configuration. Call `Build()` once; tool selection is finalized then.
 
-### Identity and model
+### Name and model
 
 | Method | Effect |
 |--------|--------|
@@ -39,19 +39,19 @@ Fluent configuration. Call `Build()` once; tool selection is finalized then.
 | `RegisterTool(definition)` | Register globally and add to this agent |
 | `AddTool(name, definition)` / `AddTools(map)` | Add definitions on this agent |
 
-If you pass neither presets nor explicit tools, the builder enables **all** preset groups.
+If you pass neither presets nor explicit tools, the agent stays bare: no tools. Opt in with `WithPresets`, `WithTools`, `AddTool`, or `DefaultSystemTools`. Selecting tools does **not** inject `BASE_PROMPT`; tools are sent as provider schemas only. Import `BASE_PROMPT` and pass it via `.SystemPrompt(...)` if you want that text.
 
 ### Behavior and routing
 
 | Method | Effect |
 |--------|--------|
-| `Identity(text)` | System identity string |
-| `ContextLimit(n)` | Message context limit (message count) |
-| `AutoSummary(enabled?)` | Enable context auto-summary |
+| `SystemPrompt(text)` | Full system message (verbatim). Empty/omitted → no system message |
+| `ContextLimit(n)` | Message turn limit for trim / auto-summary |
+| `AutoSummary(enabled?)` | When limit exceeded, rolling summary instead of trim |
 | `RemoteContext(url)` | Remote context URL |
 | `Options(record)` | Provider options (`temperature`, `num_ctx`, …) |
 | `RoutingPolicy(partial)` | `maxToolRounds`, `repeatCallLimit`, `deterministicMode`, … |
-| `Policy(policy)` | Set `AgentPolicy` (tool allow-list, gates, directive) |
+| `Policy(policy)` | Set `AgentPolicy` (tool allow-list, gates) |
 | `TodoStore(store)` | Inject todo persistence (default: in-memory) |
 | `Delegation(config \| null)` | Enable/disable `delegate_task` with explicit child profile + key |
 | `LogLevel(level)` | Logger level for this agent |
@@ -67,7 +67,7 @@ const agent = new AgentBuilder()
   .WithModelProfile(openAiProfile('gpt-4o'))
   .WithPresets('filesystem', 'shell', 'search', 'planning')
   .WithoutTools('delete_file')
-  .Identity('You are a careful coding agent.')
+  .SystemPrompt('You are a careful coding agent.')
   .ContextLimit(80)
   .AutoSummary(true)
   .RoutingPolicy({ maxToolRounds: 40, repeatCallLimit: 2 })
@@ -106,7 +106,7 @@ Throws `ChatAbortedError` when the abort signal fires.
 | `getTools()` | Tools allowed under the **current** policy |
 | `mergeExternalTools(tools)` | Add MCP (or other) tools into the base set |
 | `removeExternalTools(prefix?)` | Remove tools by name prefix (default `mcp_`) |
-| `rebuildSystemPrompt()` | Refresh system prompt after config/policy changes |
+| `setSystemPrompt(text)` / `rebuildSystemPrompt()` | Update or re-apply the system message |
 
 ### Model and session
 
@@ -123,15 +123,17 @@ Throws `ChatAbortedError` when the abort signal fires.
 
 | Method | Description |
 |--------|-------------|
-| `loadHistory(messages)` | Restore chat messages (keeps current system message) |
+| `loadHistory(messages)` | Restore chat messages (keeps current system message if present) |
 | `getHistory()` / `getMessageHistory()` | Current messages |
-| `getContextUsage()` / `getMemoryUsage()` / `getUsageBreakdown()` | Context stats |
-| `getStats()` | Token stats helper |
+| `getMemoryUsage()` | Non-system message count vs `ContextLimit` |
+| `getStats()` | Provider token stats (`current` / `session`) |
 | `setSessionUsage(usage)` | Seed session token totals |
+| `summarize()` | Manually run the same rolling summary as `AutoSummary` |
 | `getTodoSnapshot()` / `getCachedTodoSnapshot()` | Todo list for the session |
-| `refreshCurrentTodosBlock()` | Refresh the current-todos prompt block |
 | `setChatLogSource(source)` | Tag for debug logging |
 | `getPromptCacheKey()` | Prompt cache key when applicable |
+
+When `AutoSummary` is on and the turn count exceeds `ContextLimit`, older turns collapse into one `user` message (`Önceki konuşmaların özeti: …`) placed after the system message. `summarize()` does the same without waiting for the limit. Otherwise the history is trimmed.
 
 ## Routing policy
 
@@ -143,6 +145,6 @@ Throws `ChatAbortedError` when the abort signal fires.
 - `deniedTools` / `deniedToolReason` — filled from the active `AgentPolicy`
 - `perTurnToolLimits` — e.g. `{ todo_write: 1 }`
 
-Behavioral modes (agent/plan/ask/chat) are **not** in this package — hosts map them to `AgentPolicy` (see `poyraz-cli`).
+Behavioral modes (agent/plan/ask/chat) are **not** in this package — hosts map them to `AgentPolicy` plus optional `SystemPrompt` text (see `poyraz-cli`).
 
 Set via `AgentBuilder.RoutingPolicy()` or a template’s `routingPolicy` field.

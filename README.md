@@ -43,7 +43,7 @@ Supported providers: OpenAI, Groq, Gemini, OpenRouter, Ollama.
 
 | Capability | Description | Docs |
 |------------|-------------|------|
-| Agent policy | Generic tool allow-lists, directives, response gates | [Agent policy](docs/modes.md) |
+| Agent policy | Generic tool allow-lists and response gates | [Agent policy](docs/modes.md) |
 | Built-in tools | Filesystem, shell, search, todos | [Tools](docs/tools.md) |
 | Custom tools | `defineTool` + register on the agent | [Custom tools](docs/custom-tools.md) |
 | MCP | Connect servers you pass in; merge tools onto the agent | [MCP](docs/mcp.md) |

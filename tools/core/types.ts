@@ -31,7 +31,6 @@ export interface ToolContext {
   logger?: typeof logger;
   sessionId?: string;
   abortSignal?: AbortSignal;
-  refreshSystemPrompt?: () => void;
   lastReadFile?: LastReadFileState;
   /** Starts one background subagent and returns immediately. */
   delegateTask?: (task: string) => Promise<DelegateTaskStartResult>;

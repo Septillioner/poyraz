@@ -3,30 +3,6 @@ import { logger } from '../../shared/logger.js';
 
 export interface ContextOptions {
   limit: number;
-  autoSummary: boolean;
-  totalCapacity: number;
-}
-
-export interface UsageBreakdown {
-  byRole: {
-    system: number;
-    user: number;
-    assistant: number;
-    tool: number;
-  };
-  percentages: {
-    system: number;
-    user: number;
-    assistant: number;
-    tool: number;
-  };
-  total: number;
-  messageCounts: {
-    system: number;
-    user: number;
-    assistant: number;
-    tool: number;
-  };
 }
 
 export interface MessageContext {
@@ -35,12 +11,14 @@ export interface MessageContext {
   getMessagesCopy(): ChatMessage[];
   setMessages(messages: ChatMessage[]): void;
   clear(): void;
-  getUsage(): { used: number; total: number; percentage: number };
   getMemoryUsage(): { current: number; limit: number; percentage: number };
-  getUsageBreakdown(): UsageBreakdown;
   shouldManage(): boolean;
   trim(): void;
   getMessagesToSummarize(): { toSummarize: ChatMessage[]; keepIndex: number };
+}
+
+function hasPinnedSystem(messages: ChatMessage[]): boolean {
+  return messages.length > 0 && messages[0].role === 'system';
 }
 
 export function createMessageContext(options: ContextOptions): MessageContext {
@@ -48,6 +26,30 @@ export function createMessageContext(options: ContextOptions): MessageContext {
 
   const getConversationTurnCount = () =>
     messages.filter((m) => m.role === 'user' || m.role === 'assistant').length;
+
+  const findCutIndex = (keepTurns: number): number => {
+    const pinnedSystem = hasPinnedSystem(messages);
+    const minIndex = pinnedSystem ? 1 : 0;
+    let keptTurns = 0;
+    let cutIndex = messages.length;
+
+    for (let i = messages.length - 1; i >= minIndex; i--) {
+      if (messages[i].role === 'user' || messages[i].role === 'assistant') {
+        keptTurns++;
+      }
+      if (keptTurns >= keepTurns) {
+        cutIndex = i;
+        break;
+      }
+    }
+
+    cutIndex = Math.max(minIndex, cutIndex);
+    while (cutIndex > minIndex && messages[cutIndex].role === 'tool') {
+      cutIndex--;
+    }
+
+    return cutIndex;
+  };
 
   return {
     addMessage(message: ChatMessage) {
@@ -65,13 +67,6 @@ export function createMessageContext(options: ContextOptions): MessageContext {
     clear() {
       messages = [];
     },
-    getUsage() {
-      const totalCtx = options.totalCapacity || 128000;
-      const usedChars = JSON.stringify(messages).length;
-      const estimatedTokens = Math.ceil(usedChars / 4);
-      const percentage = Math.min(100, Math.round((estimatedTokens / totalCtx) * 100));
-      return { used: estimatedTokens, total: totalCtx, percentage };
-    },
     getMemoryUsage() {
       const current = messages.filter((m) => m.role !== 'system').length;
       const limit = options.limit;
@@ -79,34 +74,6 @@ export function createMessageContext(options: ContextOptions): MessageContext {
         current,
         limit,
         percentage: Math.min(100, Math.round((current / limit) * 100)),
-      };
-    },
-    getUsageBreakdown(): UsageBreakdown {
-      const byRole = { system: 0, user: 0, assistant: 0, tool: 0 };
-      const messageCounts = { system: 0, user: 0, assistant: 0, tool: 0 };
-
-      for (const message of messages) {
-        const estimated = Math.ceil(JSON.stringify(message).length / 4);
-        const role = message.role;
-        if (role === 'system' || role === 'user' || role === 'assistant' || role === 'tool') {
-          byRole[role] += estimated;
-          messageCounts[role]++;
-        }
-      }
-
-      const total = byRole.system + byRole.user + byRole.assistant + byRole.tool;
-      const percentage = (value: number) => (total > 0 ? Math.round((value / total) * 100) : 0);
-
-      return {
-        byRole,
-        percentages: {
-          system: percentage(byRole.system),
-          user: percentage(byRole.user),
-          assistant: percentage(byRole.assistant),
-          tool: percentage(byRole.tool),
-        },
-        total,
-        messageCounts,
       };
     },
     shouldManage() {
@@ -117,53 +84,24 @@ export function createMessageContext(options: ContextOptions): MessageContext {
       if (turnCount <= options.limit) return;
 
       logger.info(`Trimming history (${turnCount} turns exceeds limit ${options.limit})...`);
-      const systemMessage = messages[0];
-
       const keepTurns = Math.ceil(options.limit * 0.6);
-      let keptTurns = 0;
-      let cutIndex = messages.length;
-      for (let i = messages.length - 1; i >= 1; i--) {
-        if (messages[i].role === 'user' || messages[i].role === 'assistant') {
-          keptTurns++;
-        }
-        if (keptTurns >= keepTurns) {
-          cutIndex = i;
-          break;
-        }
-      }
-
-      cutIndex = Math.max(1, cutIndex);
-      while (cutIndex > 1 && messages[cutIndex].role === 'tool') {
-        cutIndex--;
-      }
-
+      const cutIndex = findCutIndex(keepTurns);
       const recentMessages = messages.slice(cutIndex);
-      messages = [systemMessage, ...recentMessages];
+
+      if (hasPinnedSystem(messages)) {
+        messages = [messages[0], ...recentMessages];
+      } else {
+        messages = recentMessages;
+      }
     },
     getMessagesToSummarize() {
       const keepTurns = Math.ceil(options.limit * 0.6);
-      let keptTurns = 0;
-      let keepFromIndex = messages.length;
-
-      for (let i = messages.length - 1; i >= 1; i--) {
-        if (messages[i].role === 'user' || messages[i].role === 'assistant') {
-          keptTurns++;
-        }
-        if (keptTurns >= keepTurns) {
-          keepFromIndex = i;
-          break;
-        }
-      }
-
-      while (keepFromIndex > 1 && messages[keepFromIndex].role === 'tool') {
-        keepFromIndex--;
-      }
-
-      keepFromIndex = Math.max(1, keepFromIndex);
+      const keepIndex = findCutIndex(keepTurns);
+      const startIndex = hasPinnedSystem(messages) ? 1 : 0;
 
       return {
-        toSummarize: messages.slice(1, keepFromIndex),
-        keepIndex: keepFromIndex,
+        toSummarize: messages.slice(startIndex, keepIndex),
+        keepIndex,
       };
     },
   };

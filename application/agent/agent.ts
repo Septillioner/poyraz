@@ -14,16 +14,12 @@ import { createMessageContext } from '../context/message-context.js';
 import { applyContextManagement, summarizeHistory } from '../context/summarizer.js';
 import { createTokenStats } from '../stats/token-stats.js';
 import { buildSystemPrompt, BuiltSystemPrompt } from '../prompt/system-prompt.js';
-import { buildActiveToolsSection } from '../prompt/tool-schema-hints.js';
-import { inferPromptHintTier } from '../../domain/model-profile.js';
 import { createToolPolicyGuard, type ToolRoutingPolicy } from '../chat/tool-policy.js';
 import { runDecisionLoop } from '../chat/decision-loop.js';
 import {
   writeChatDebugLog,
   type ChatDebugLogSource,
 } from '../../infrastructure/persistence/chat-debug-log.js';
-import { formatCurrentTodosPromptBlock } from '../../presentation/ui/todo-table.js';
-import { resolvePersona } from './identity-resolver.js';
 import {
   resolveAgentTools,
   resolveMaxToolRounds,
@@ -57,7 +53,7 @@ export class Agent {
   private policyConfig: ToolRoutingPolicy;
   private policy: AgentPolicy;
   private todoStore: TodoStore;
-  private context = createMessageContext({ limit: 50, autoSummary: false, totalCapacity: 128000 });
+  private context = createMessageContext({ limit: 50 });
   private stats = createTokenStats();
   private sessionId?: string;
   private builtPrompt?: BuiltSystemPrompt;
@@ -68,8 +64,6 @@ export class Agent {
   private readonly subagentEventListeners = new Set<(event: AgentStreamEvent) => void>();
   private readonly toolContext: ToolContext = {};
   private readonly subagentJobs = new SubagentJobManager();
-  /** Cached <current_todos> block; refreshed before rounds. */
-  private currentTodosBlock = '';
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -91,8 +85,6 @@ export class Agent {
     };
     this.context = createMessageContext({
       limit: config.contextLimit || 50,
-      autoSummary: config.autoSummary || false,
-      totalCapacity: this.options.num_ctx || 128000,
     });
 
     if (config.provider) {
@@ -133,7 +125,6 @@ export class Agent {
       if (!this.baseTools[DELEGATE_TASK_TOOL_NAME]) return;
       delete this.baseTools[DELEGATE_TASK_TOOL_NAME];
       this.applyPolicy();
-      this.rebuildSystemPrompt();
       return;
     }
 
@@ -146,7 +137,6 @@ export class Agent {
     }
 
     this.applyPolicy();
-    this.rebuildSystemPrompt();
   }
 
   setDelegation(delegation: AgentDelegationConfig | null): void {
@@ -228,7 +218,6 @@ export class Agent {
     }
     this.baseTools = { ...this.baseTools, ...tools };
     this.applyPolicy();
-    this.rebuildSystemPrompt();
   }
 
   /** Removes previously merged external tools whose name starts with `prefix` (default: MCP-bridged tools). */
@@ -243,7 +232,6 @@ export class Agent {
     }
     this.baseTools = nextBaseTools;
     this.applyPolicy();
-    this.rebuildSystemPrompt();
   }
 
   getPolicy(): AgentPolicy {
@@ -253,27 +241,37 @@ export class Agent {
   setPolicy(policy: AgentPolicy): void {
     this.policy = policy;
     this.applyPolicy();
+  }
+
+  setSystemPrompt(text: string): void {
+    this.config.systemPrompt = text;
     this.rebuildSystemPrompt();
   }
 
   rebuildSystemPrompt(): BuiltSystemPrompt {
-    const built = buildSystemPrompt({
-      modeDirective: this.policy.directive,
-      persona: resolvePersona(this.config),
-      activeToolsSection: buildActiveToolsSection(
-        Object.keys(this.tools),
-        inferPromptHintTier(this.model)
-      ),
-      currentTodosSection: this.currentTodosBlock || undefined,
-    });
+    const built = buildSystemPrompt(this.config.systemPrompt);
     this.builtPrompt = built;
 
-    const systemMessage: ChatMessage = { role: 'system', content: built.content };
     const msgs = this.context.getMessagesCopy();
+    const hasSystem = msgs.length > 0 && msgs[0].role === 'system';
+    const previousContent = hasSystem ? msgs[0].content : '';
+
+    if (!built.content.trim()) {
+      if (hasSystem) {
+        this.context.setMessages(msgs.slice(1));
+      }
+      return built;
+    }
+
+    if (hasSystem && previousContent === built.content) {
+      return built;
+    }
+
+    const systemMessage: ChatMessage = { role: 'system', content: built.content };
 
     if (msgs.length === 0) {
       this.context.setMessages([systemMessage]);
-    } else if (msgs[0].role === 'system') {
+    } else if (hasSystem) {
       msgs[0] = systemMessage;
       this.context.setMessages(msgs);
     } else {
@@ -283,11 +281,6 @@ export class Agent {
     return built;
   }
 
-  async refreshCurrentTodosBlock(): Promise<void> {
-    const snapshot = await this.getTodoSnapshot();
-    this.currentTodosBlock = formatCurrentTodosPromptBlock(snapshot);
-  }
-
   async init() {
     this.rebuildSystemPrompt();
     logger.debug('Agent initialized', { name: this.name, model: this.model });
@@ -295,7 +288,8 @@ export class Agent {
 
   loadHistory(messages: ChatMessage[]) {
     this.historyLoaded = true;
-    const sysMsg = this.context.getMessages()[0];
+    const existing = this.context.getMessages();
+    const sysMsg = existing[0]?.role === 'system' ? existing[0] : undefined;
     const filtered = messages.filter((m, i) => !(m.role === 'system' && i === 0));
     this.context.setMessages(sysMsg ? [sysMsg, ...filtered] : filtered);
   }
@@ -304,16 +298,8 @@ export class Agent {
     return this.context.getMessages();
   }
 
-  getContextUsage() {
-    return this.context.getUsage();
-  }
-
   getMemoryUsage() {
     return this.context.getMemoryUsage();
-  }
-
-  getUsageBreakdown() {
-    return this.context.getUsageBreakdown();
   }
 
   getStats() {
@@ -358,7 +344,6 @@ export class Agent {
     this.config.host = profile.host;
     this.config.apiKey = apiKey;
     this.provider = createLLMProvider(profile, apiKey);
-    this.rebuildSystemPrompt();
   }
 
   setSessionId(id: string) {
@@ -405,6 +390,11 @@ export class Agent {
     return `${this.name}:${this.builtPrompt.cacheKey}`;
   }
 
+  /** Compact older turns into a single rolling user summary message. */
+  async summarize(handlers?: ChatHandlers): Promise<void> {
+    await summarizeHistory(this.context, this.provider, this.model, handlers);
+  }
+
   async chat(userInput: string, handlers?: ChatHandlers): Promise<{ content: string; usage: TokenUsage }> {
     this.context.addMessage({ role: 'user', content: userInput });
     this.stats.resetCurrent();
@@ -421,8 +411,6 @@ export class Agent {
     try {
       // Flush any background result that finished between turns.
       this.flushSubagentPending(handlers?.onEvent);
-      await this.refreshCurrentTodosBlock();
-      this.rebuildSystemPrompt();
 
       const policyGuard = createToolPolicyGuard(this.policyConfig);
       policyGuard.reset();
@@ -451,8 +439,6 @@ export class Agent {
           getTodoSnapshot: () => this.getTodoSnapshot(),
           onBeforeRound: async () => {
             this.flushSubagentPending(handlers?.onEvent);
-            await this.refreshCurrentTodosBlock();
-            this.rebuildSystemPrompt();
           },
           waitForSubagentIfNeeded: async () => {
             if (!this.subagentJobs.isRunning() && !this.subagentJobs.hasPendingFlush()) {
@@ -470,7 +456,7 @@ export class Agent {
         this.context,
         this.config.autoSummary || false,
         handlers,
-        () => summarizeHistory(this.context, this.provider, this.model, handlers)
+        () => this.summarize(handlers)
       );
 
       result = { content: loopResult.content, usage: this.stats.getCurrent() };
@@ -509,9 +495,6 @@ export class Agent {
     this.toolContext.sessionId = this.sessionId;
     this.toolContext.abortSignal = this.activeAbortSignal;
     this.toolContext.todoStore = this.todoStore;
-    this.toolContext.refreshSystemPrompt = () => {
-      this.rebuildSystemPrompt();
-    };
     this.toolContext.delegateTask = this.config.delegation
       ? async (task: string) =>
           this.subagentJobs.start({

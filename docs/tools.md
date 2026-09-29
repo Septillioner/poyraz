@@ -1,6 +1,6 @@
 # Tools
 
-Built-in tools are available as soon as you import `poyraz`. You choose which ones an agent gets via presets, includes/excludes, or custom definitions.
+Built-in tools are registered when you import `poyraz`, but an agent gets none until you opt in via presets, includes/excludes, or custom definitions. Without a tool selection the agent is a bare model (no tools). Selecting tools does not inject `BASE_PROMPT` into the system message; tools go as provider schemas. Pass coding instructions yourself with `.SystemPrompt(...)` (optionally including exported `BASE_PROMPT`).
 
 ## Presets
 

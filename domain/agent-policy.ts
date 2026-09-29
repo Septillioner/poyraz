@@ -16,7 +16,6 @@ export interface ResponseGate {
 export interface AgentPolicy {
   id: string;
   allowedTools: 'all' | string[];
-  directive?: string;
   /** When true, denied tools abort the turn (hard block). Default false. */
   hardBlockDeniedTools?: boolean;
   /** Reason returned when a tool is denied by allowedTools. */

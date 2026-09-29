@@ -1,6 +1,6 @@
 # Agent policy
 
-Poyraz does not ship CLI modes (`agent` / `plan` / `ask` / `chat`). Those live in `poyraz-cli`. The library exposes a generic **AgentPolicy** that controls tools, directives, and response gates.
+Poyraz does not ship CLI modes (`agent` / `plan` / `ask` / `chat`). Those live in `poyraz-cli`. The library exposes a generic **AgentPolicy** that controls tools and response gates. Mode or profession text belongs in `.SystemPrompt(...)`, not in the policy.
 
 ```ts
 import { AgentBuilder, DEFAULT_AGENT_POLICY, type AgentPolicy } from 'poyraz';
@@ -11,10 +11,10 @@ const readOnly: AgentPolicy = {
   hardBlockDeniedTools: true,
   deniedToolReason: 'This tool is disabled under the active policy.',
   enforceOpenTodos: false,
-  directive: 'Answer with read-only tools only.',
 };
 
 const agent = new AgentBuilder()
+  .SystemPrompt('Answer with read-only tools only.')
   .Policy(readOnly)
   .WithPresets('filesystem', 'search')
   .Build();
@@ -28,7 +28,6 @@ agent.setPolicy({ ...DEFAULT_AGENT_POLICY, id: 'agent', enforceOpenTodos: true }
 |-------|------|
 | `id` | Stable policy id (hosts may map this to a UX mode name) |
 | `allowedTools` | `'all'` or an allow-list of tool names |
-| `directive` | Injected as the `[MODE]` system-prompt block |
 | `hardBlockDeniedTools` | When true, circuit breakers hard-stop denied tool loops |
 | `deniedToolReason` | Message returned when a tool is denied |
 | `bufferTextUntilAccepted` | Buffer `text.delta` until a text-only reply passes gates |
@@ -59,4 +58,4 @@ const gate: ResponseGate = {
 
 ## CLI modes
 
-`poyraz-cli` maps `agent` / `plan` / `ask` / `chat` onto `AgentPolicy` values (including plan response gates). See the CLI `docs/models-and-modes.md`.
+`poyraz-cli` maps `agent` / `plan` / `ask` / `chat` onto `AgentPolicy` values and mode text in `SystemPrompt` (including plan response gates). See the CLI `docs/models-and-modes.md`.
