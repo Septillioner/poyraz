@@ -20,11 +20,16 @@ export const DEFAULT_GEMINI_API_BASE = 'https://generativelanguage.googleapis.co
 export const DEFAULT_GEMINI_HOST = `${DEFAULT_GEMINI_API_BASE}/openai`;
 export const DEFAULT_OPENROUTER_HOST = 'https://openrouter.ai/api/v1';
 
-export function openRouterDefaultHeaders(env?: NodeJS.ProcessEnv): Record<string, string> {
-  const e = env ?? process.env;
+export const DEFAULT_OPENROUTER_HTTP_REFERER = 'https://github.com/poyraz';
+export const DEFAULT_OPENROUTER_APP_TITLE = 'Poyraz';
+
+export function openRouterDefaultHeaders(options?: {
+  referer?: string;
+  title?: string;
+}): Record<string, string> {
   return {
-    'HTTP-Referer': e.OPENROUTER_HTTP_REFERER || 'https://github.com/poyraz',
-    'X-Title': e.OPENROUTER_APP_TITLE || 'Poyraz',
+    'HTTP-Referer': options?.referer || DEFAULT_OPENROUTER_HTTP_REFERER,
+    'X-Title': options?.title || DEFAULT_OPENROUTER_APP_TITLE,
   };
 }
 
@@ -36,35 +41,24 @@ export function inferProviderFromHost(host: string): ModelProviderKind {
   return 'ollama';
 }
 
-export function resolveApiKeysFromEnv(env?: NodeJS.ProcessEnv): ProviderApiKeys {
-  const e = env ?? process.env;
-  return {
-    openai: e.OPENAI_API_KEY,
-    groq: e.GROQ_API_KEY,
-    gemini: e.GEMINI_API_KEY,
-    openrouter: e.OPENROUTER_API_KEY,
-  };
-}
-
 export function resolveApiKeyForProfile(
   profile: ModelProfile,
-  keys?: ProviderApiKeys
+  keys: ProviderApiKeys
 ): string {
-  const resolved = keys ?? resolveApiKeysFromEnv();
   if (profile.provider === 'openrouter' || profile.host.includes('openrouter.ai')) {
-    return resolved.openrouter || '';
+    return keys.openrouter || '';
   }
   if (profile.provider === 'groq' || profile.host.includes('groq.com')) {
-    return resolved.groq || '';
+    return keys.groq || '';
   }
   if (
     profile.provider === 'gemini' ||
     profile.host.includes('generativelanguage.googleapis.com')
   ) {
-    return resolved.gemini || '';
+    return keys.gemini || '';
   }
   if (profile.provider === 'openai' || profile.host.includes('openai.com')) {
-    return resolved.openai || '';
+    return keys.openai || '';
   }
   return '';
 }

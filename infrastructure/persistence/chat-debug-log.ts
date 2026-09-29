@@ -1,10 +1,7 @@
 import { mkdir, writeFile } from 'fs/promises';
 import path from 'path';
 import type { ChatMessage, TokenUsage } from '../../domain/llm.js';
-import {
-  isWorkspaceFileLoggingEnabled,
-  resolveWorkspaceLogDir,
-} from './workspace-trust.js';
+import { getConfiguredLogDir, isFileLoggingEnabled } from '../../shared/logger.js';
 
 export type ChatDebugLogSource = 'cli' | 'http';
 
@@ -23,9 +20,9 @@ export interface ChatDebugLogEntry {
 
 export async function writeChatDebugLog(entry: ChatDebugLogEntry): Promise<void> {
   try {
-    if (!isWorkspaceFileLoggingEnabled()) return;
+    if (!isFileLoggingEnabled()) return;
 
-    const logDir = resolveWorkspaceLogDir();
+    const logDir = getConfiguredLogDir();
     if (!logDir) return;
 
     const now = new Date();

@@ -2,14 +2,14 @@ import {
   AgentExecutionContext,
   buildExecutionContext,
 } from '../../domain/execution-phase.js';
-import { taskRepository } from '../../infrastructure/persistence/task-repository.js';
+import type { TodoStore } from '../../domain/todo-store.js';
 
 export interface ActiveContext {
   get(): AgentExecutionContext;
   refresh(sessionId?: string, lastUserMessage?: string): Promise<AgentExecutionContext>;
 }
 
-export function createActiveContext(): ActiveContext {
+export function createActiveContext(todoStore: TodoStore): ActiveContext {
   let context: AgentExecutionContext = {
     phase: 'idle',
     completed: [],
@@ -21,7 +21,7 @@ export function createActiveContext(): ActiveContext {
       return context;
     },
     async refresh(sessionId?: string, lastUserMessage?: string) {
-      const tasks = await taskRepository.list(sessionId);
+      const tasks = await todoStore.list(sessionId);
       context = buildExecutionContext(tasks, lastUserMessage);
       return context;
     },

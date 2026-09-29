@@ -1,7 +1,7 @@
 {
   "name": "poyraz",
   "version": "0.1.5",
-  "description": "Opinionated AI agent runtime with tools, modes, MCP, and evals",
+  "description": "Opinionated AI agent runtime with tools, MCP, policies, and evals",
   "type": "module",
   "license": "MIT",
   "main": "./dist/index.js",
@@ -13,8 +13,7 @@
     }
   },
   "files": [
-    "dist",
-    "defaults"
+    "dist"
   ],
   "engines": {
     "node": ">=20"

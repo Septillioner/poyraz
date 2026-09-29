@@ -1,12 +1,12 @@
-import type { AgentMode } from '../../domain/agent-mode.js';
-
 export interface ToolRoutingPolicy {
   maxToolRounds: number;
   repeatCallLimit: number;
   deterministicMode: boolean;
   deniedTools?: string[];
-  /** Active agent mode for mode-specific policy (e.g. plan todo_write once). */
-  mode?: AgentMode;
+  /** Reason returned when a tool is in deniedTools. */
+  deniedToolReason?: string;
+  /** Per-tool success cap within a single user turn (e.g. { todo_write: 1 }). */
+  perTurnToolLimits?: Record<string, number>;
 }
 
 export interface ToolPolicyDecision {
@@ -19,26 +19,29 @@ export interface ToolPolicyGuard {
   markAndCountSignature(signature: string): number;
   markRepairAttempt(key: string): number;
   getRepairAttempts(key: string): number;
-  /** Call after a successful todo_write in plan mode. */
-  markPlanTodoWriteSuccess(): void;
-  /** True if todo_write succeeded at least once this turn. */
-  didTodoWriteSucceed(): boolean;
+  /** Record a successful tool execution for per-turn limits. */
+  markToolSuccess(toolName: string): void;
+  /** True if the named tool succeeded at least once this turn. */
+  didToolSucceed(toolName: string): boolean;
+  /** Set of tool names that succeeded this turn. */
+  succeededTools(): ReadonlySet<string>;
   canExecute(toolName: string): Promise<ToolPolicyDecision>;
   getPolicy(): ToolRoutingPolicy;
 }
 
+const DEFAULT_DENIED_TOOL_REASON =
+  'This tool is disabled under the active policy. Do not retry it.';
+
 export function createToolPolicyGuard(policy: ToolRoutingPolicy): ToolPolicyGuard {
   const normalizedCallCounts = new Map<string, number>();
   const repairCounts = new Map<string, number>();
-  let planTodoWriteSucceeded = false;
-  let todoWriteSucceeded = false;
+  const successCounts = new Map<string, number>();
 
   return {
     reset() {
       normalizedCallCounts.clear();
       repairCounts.clear();
-      planTodoWriteSucceeded = false;
-      todoWriteSucceeded = false;
+      successCounts.clear();
     },
     markAndCountSignature(signature: string) {
       const count = (normalizedCallCounts.get(signature) || 0) + 1;
@@ -53,35 +56,30 @@ export function createToolPolicyGuard(policy: ToolRoutingPolicy): ToolPolicyGuar
     getRepairAttempts(key: string) {
       return repairCounts.get(key) || 0;
     },
-    markPlanTodoWriteSuccess() {
-      planTodoWriteSucceeded = true;
-      todoWriteSucceeded = true;
+    markToolSuccess(toolName: string) {
+      successCounts.set(toolName, (successCounts.get(toolName) || 0) + 1);
     },
-    didTodoWriteSucceed() {
-      return todoWriteSucceeded;
+    didToolSucceed(toolName: string) {
+      return (successCounts.get(toolName) || 0) > 0;
+    },
+    succeededTools() {
+      return new Set(successCounts.keys());
     },
     async canExecute(toolName: string) {
       if (policy.deniedTools?.includes(toolName)) {
         return {
           allowed: false,
-          reason:
-            'This tool is disabled in the active mode. Writes and commands are blocked here. ' +
-            'Tell the user to switch to Agent mode with "/mode agent" to apply changes; ' +
-            'do not ask whether to proceed and do not retry this tool.',
+          reason: policy.deniedToolReason?.trim() || DEFAULT_DENIED_TOOL_REASON,
         };
       }
 
-      if (
-        toolName === 'todo_write' &&
-        policy.mode === 'plan' &&
-        planTodoWriteSucceeded
-      ) {
+      const limit = policy.perTurnToolLimits?.[toolName];
+      if (limit !== undefined && (successCounts.get(toolName) || 0) >= limit) {
         return {
           allowed: false,
           reason:
-            'In Plan mode todo_write may be called at most once per user turn. ' +
-            'You already recorded the plan. Stop calling tools and present the plan in plain text. ' +
-            'Tell the user to switch to Agent mode with "/mode agent" to apply changes.',
+            `Tool '${toolName}' may be called at most ${limit} time(s) per turn under the active policy. ` +
+            'Stop calling tools and respond to the user.',
         };
       }
 

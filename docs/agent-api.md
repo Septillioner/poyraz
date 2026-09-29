@@ -26,7 +26,7 @@ Fluent configuration. Call `Build()` once; tool selection is finalized then.
 | `RemoteModel(url, model?)` | Custom host (and optional model) |
 | `WithModelProfile(profile)` | Sets `model` + `host` from a `ModelProfile` |
 | `Provider(provider)` | Inject a custom `LLMProvider` |
-| `ApiKey(key)` | Explicit API key (prefer env / `~/.poyraz/.env`) |
+| `ApiKey(key)` | Explicit API key (required for remote providers) |
 
 ### Tools
 
@@ -51,6 +51,9 @@ If you pass neither presets nor explicit tools, the builder enables **all** pres
 | `RemoteContext(url)` | Remote context URL |
 | `Options(record)` | Provider options (`temperature`, `num_ctx`, …) |
 | `RoutingPolicy(partial)` | `maxToolRounds`, `repeatCallLimit`, `deterministicMode`, … |
+| `Policy(policy)` | Set `AgentPolicy` (tool allow-list, gates, directive) |
+| `TodoStore(store)` | Inject todo persistence (default: in-memory) |
+| `Delegation(config \| null)` | Enable/disable `delegate_task` with explicit child profile + key |
 | `LogLevel(level)` | Logger level for this agent |
 | `FromTemplate(template)` / `FromJSON(json)` | Load from an `AgentTemplate` / JSON object |
 
@@ -93,22 +96,24 @@ const { content, usage } = await agent.chat(userInput, {
 
 Throws `ChatAbortedError` when the abort signal fires.
 
-### Mode and tools
+### Policy and tools
 
 | Method | Description |
 |--------|-------------|
-| `getMode()` / `setMode(mode)` | `agent` \| `plan` \| `ask` \| `chat` |
-| `getTools()` | Tools allowed in the **current** mode |
+| `getPolicy()` / `setPolicy(policy)` | Active `AgentPolicy` |
+| `getDelegation()` / `setDelegation(config \| null)` | Child model for `delegate_task` |
+| `syncDelegationTool()` | Refresh `delegate_task` presence from current delegation config |
+| `getTools()` | Tools allowed under the **current** policy |
 | `mergeExternalTools(tools)` | Add MCP (or other) tools into the base set |
 | `removeExternalTools(prefix?)` | Remove tools by name prefix (default `mcp_`) |
-| `rebuildSystemPrompt()` | Refresh system prompt after config/mode changes |
+| `rebuildSystemPrompt()` | Refresh system prompt after config/policy changes |
 
 ### Model and session
 
 | Method | Description |
 |--------|-------------|
 | `getModel()` / `setModel(model)` | Model id |
-| `getModelProfile()` / `setModelProfile(profile)` | Full profile + provider swap |
+| `getModelProfile()` / `setModelProfile(profile, apiKey)` | Full profile + provider swap (apiKey required) |
 | `getName()` | Agent name |
 | `setSessionId(id)` / `getSessionId()` | Session id (todos, shell cwd) |
 | `getApiKeyPreview()` | Masked key preview or `null` |
@@ -135,7 +140,9 @@ Throws `ChatAbortedError` when the abort signal fires.
 - `maxToolRounds` — max tool rounds per turn
 - `repeatCallLimit` — identical call signature limit
 - `deterministicMode` — stricter policy guard behavior
-- `deniedTools` — filled automatically from the active mode
-- `mode` — current mode (e.g. plan-mode `todo_write` once)
+- `deniedTools` / `deniedToolReason` — filled from the active `AgentPolicy`
+- `perTurnToolLimits` — e.g. `{ todo_write: 1 }`
+
+Behavioral modes (agent/plan/ask/chat) are **not** in this package — hosts map them to `AgentPolicy` (see `poyraz-cli`).
 
 Set via `AgentBuilder.RoutingPolicy()` or a template’s `routingPolicy` field.

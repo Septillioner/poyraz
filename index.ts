@@ -1,23 +1,19 @@
 export { Agent, type AgentConfig } from './application/agent/agent.js';
 export { AgentBuilder } from './application/agent/agent-builder.js';
-export { templateRegistry } from './application/template-registry.js';
-export type { AgentTemplate } from './application/agent/config.js';
+export type { AgentTemplate, AgentDelegationConfig } from './application/agent/config.js';
 export type { ToolRoutingPolicy } from './application/chat/tool-policy.js';
 
 export { buildSystemPrompt } from './application/prompt/system-prompt.js';
 export type { BuiltSystemPrompt } from './application/prompt/system-prompt.js';
+
 export {
-  AGENT_MODES,
-  AGENT_MODE_CYCLE,
-  DEFAULT_AGENT_MODE,
-  isAgentMode,
-  nextAgentMode,
-  resolveAgentMode,
-  resolveModeDenied,
-  resolveModeTools,
-  type AgentMode,
-  type AgentModeDef,
-} from './domain/agent-mode.js';
+  DEFAULT_AGENT_POLICY,
+  resolvePolicyDenied,
+  resolvePolicyTools,
+  type AgentPolicy,
+  type GateVerdict,
+  type ResponseGate,
+} from './domain/agent-policy.js';
 
 export { createMessageContext } from './application/context/message-context.js';
 export type { UsageBreakdown, MessageContext } from './application/context/message-context.js';
@@ -46,7 +42,6 @@ export {
   DEFAULT_OPENROUTER_HOST,
   inferProviderFromHost,
   resolveApiKeyForProfile,
-  resolveApiKeysFromEnv,
   formatProviderLabel,
   openRouterProfile,
   groqProfile,
@@ -69,22 +64,12 @@ export type {
 } from './domain/llm.js';
 
 export {
-  loadSessionPrefs,
-  saveLastMode,
-  saveLastModelProfile,
-  saveSessionPrefs,
-} from './application/services/session-prefs.js';
-export type { SessionPrefs } from './application/services/session-prefs.js';
-export {
-  resolveModelProfile,
-  resolveModelProfileSync,
   findModelProfile,
   inferProfileForModel,
   rowToModelProfile,
 } from './application/services/resolve-model-profile.js';
 export {
   listAggregatedChatModels,
-  listChatModelsEnvFromProcess,
   groupModelsByProvider,
   groupOpenRouterByTier,
   classifyOpenRouterTier,
@@ -100,14 +85,12 @@ export type { ModelInfo } from './application/services/model-info.js';
 export {
   DELEGATE_TASK_TOOL_NAME,
   SUBAGENT_MAX_TOOL_ROUNDS,
-  SUBAGENT_MODEL_ENV,
   SUBAGENT_READ_ONLY_TOOLS,
-  isSubagentModelConfigured,
-  readSubagentModelId,
 } from './application/services/subagent-constants.js';
 export {
   buildSubagentConfig,
   runSubagentTask,
+  DEFAULT_SUBAGENT_POLICY,
 } from './application/services/subagent-runner.js';
 export type {
   SubagentChatCapable,
@@ -128,85 +111,38 @@ export {
   previewSubagentContent,
 } from './application/chat/subagent-result-gate.js';
 
-export { taskRepository } from './infrastructure/persistence/task-repository.js';
+export type { TodoStore } from './domain/todo-store.js';
 export {
-  findProjectDataDirWalk,
-  resolvePoyrazGlobalDataDir,
-  resolveProjectDataDir,
-} from './infrastructure/persistence/paths.js';
-export {
-  applyWorkspaceFileLogging,
-  findWorkspaceRoot,
-  getActiveWorkspaceRoot,
-  isWorkspaceFileLoggingEnabled,
-  isWorkspaceTrustEnvOverride,
-  readWorkspaceSettings,
-  resolveWorkspaceLogDir,
-  resolveWorkspacePoyrazDir,
-  resolveWorkspaceSettingsPath,
-  resolveWorkspaceTrust,
-  setActiveWorkspaceRoot,
-  writeWorkspaceSettings,
-  type WorkspaceSettings,
-} from './infrastructure/persistence/workspace-trust.js';
-export {
-  ensureTemplatesSynced,
-  resolveBundledTemplatesDir,
-  resolveGlobalTemplatesDir,
-  syncBundledTemplatesToGlobal,
-  type TemplateSyncResult,
-} from './infrastructure/persistence/template-sync.js';
-export {
-  AUTH_PROVIDER_DEFS,
-  authProviderFromModelKind,
-  collectProjectAuthVars,
-  collectProjectEnvPaths,
-  collectProjectEnvVars,
-  ensurePoyrazHome,
-  importProjectAuthToPoyraz,
-  loadAllEnv,
-  loadPoyrazEnvIntoProcess,
-  loadProjectEnvWalk,
-  maskSecret,
-  parseEnvLine,
-  readEnvFile,
-  readPoyrazAuthValues,
-  resolveAuthProvider,
-  resolvePoyrazEnvPath,
-  resolvePoyrazHomeDir,
-  setEnvVar,
-  unsetEnvVar,
-  type AuthProviderDef,
-  type AuthProviderToken,
-  type ImportAuthEntry,
-  type ImportAuthResult,
-} from './infrastructure/persistence/poyraz-home.js';
+  createInMemoryTodoStore,
+  formatPersistedTodos,
+  TodoValidationError,
+} from './infrastructure/persistence/in-memory-todo-store.js';
 
-export { logger, LogLevel, configureFileLogging } from './shared/logger.js';
+export {
+  logger,
+  LogLevel,
+  configureFileLogging,
+  getConfiguredLogDir,
+  isFileLoggingEnabled,
+} from './shared/logger.js';
 export type { FileLoggingConfig } from './shared/logger.js';
 
 export {
-  addMcpServer,
-  getMcpServer,
   isMcpHttpServerDef,
-  listMcpServers,
-  loadMcpConfig,
-  removeMcpServer,
-  resolveMcpConfigPath,
-  saveMcpConfig,
-  setMcpServerDisabled,
   type McpConfig,
   type McpHttpServerDef,
   type McpServerDef,
   type McpServerEntry,
   type McpStdioServerDef,
-} from './infrastructure/persistence/mcp-config.js';
+} from './domain/mcp.js';
 export {
   mcpClientManager,
   type McpConnectionStatus,
   type McpServerState,
 } from './infrastructure/mcp/mcp-client-manager.js';
 export { MCP_TOOL_PREFIX, mcpToolName } from './infrastructure/mcp/mcp-tool-bridge.js';
+
+export { setActiveWorkspaceRoot } from './tools/core/shell-session.js';
 
 export * from './tools/index.js';
 export * from './presentation/ui/index.js';

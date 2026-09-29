@@ -1,26 +1,19 @@
 import { randomUUID } from 'crypto';
 import type { AgentConfig } from '../agent/config.js';
-import type { AgentMode } from '../../domain/agent-mode.js';
+import type { AgentPolicy } from '../../domain/agent-policy.js';
 import type { ChatHandlers } from '../../domain/events.js';
 import type { TokenUsage } from '../../domain/llm.js';
 import type { ModelProfile } from '../../domain/model-profile.js';
-import { resolveApiKeyForProfile } from '../../domain/model-profile.js';
-import { resolveModelProfile } from './resolve-model-profile.js';
 import {
   DELEGATE_TASK_TOOL_NAME,
   SUBAGENT_MAX_TOOL_ROUNDS,
-  SUBAGENT_MODEL_ENV,
   SUBAGENT_READ_ONLY_TOOLS,
-  readSubagentModelId,
 } from './subagent-constants.js';
 
 export {
   DELEGATE_TASK_TOOL_NAME,
   SUBAGENT_MAX_TOOL_ROUNDS,
-  SUBAGENT_MODEL_ENV,
   SUBAGENT_READ_ONLY_TOOLS,
-  isSubagentModelConfigured,
-  readSubagentModelId,
 } from './subagent-constants.js';
 
 const SUBAGENT_IDENTITY =
@@ -28,9 +21,17 @@ const SUBAGENT_IDENTITY =
   'Return a concise, self-contained summary with key findings, relevant file paths, and enough evidence for the parent agent to act. ' +
   'Do not edit files, run shell commands, create todos, or ask the user to switch modes.';
 
+export const DEFAULT_SUBAGENT_POLICY: AgentPolicy = {
+  id: 'subagent-readonly',
+  allowedTools: [...SUBAGENT_READ_ONLY_TOOLS],
+  hardBlockDeniedTools: true,
+  enforceOpenTodos: false,
+  directive: 'Read-only research subagent. Do not edit files or run commands.',
+};
+
 export interface SubagentChatCapable {
   setSessionId(id: string): void;
-  setMode(mode: AgentMode): void;
+  setPolicy(policy: AgentPolicy): void;
   init(): Promise<unknown>;
   chat(
     input: string,
@@ -40,10 +41,13 @@ export interface SubagentChatCapable {
 
 export interface SubagentRunnerOptions {
   task: string;
+  modelProfile: ModelProfile;
+  apiKey: string;
   createAgent: (config: AgentConfig) => SubagentChatCapable;
   signal?: AbortSignal;
   onEvent?: ChatHandlers['onEvent'];
-  env?: NodeJS.ProcessEnv;
+  /** Optional child policy; defaults to read-only subagent policy. */
+  policy?: AgentPolicy;
 }
 
 export interface SubagentRunResult {
@@ -52,7 +56,11 @@ export interface SubagentRunResult {
   modelProfile: ModelProfile;
 }
 
-export function buildSubagentConfig(modelProfile: ModelProfile, apiKey: string): AgentConfig {
+export function buildSubagentConfig(
+  modelProfile: ModelProfile,
+  apiKey: string,
+  policy?: AgentPolicy
+): AgentConfig {
   return {
     name: 'Subagent',
     model: modelProfile.model,
@@ -63,6 +71,7 @@ export function buildSubagentConfig(modelProfile: ModelProfile, apiKey: string):
     identity: SUBAGENT_IDENTITY,
     contextLimit: 40,
     autoSummary: false,
+    policy: policy ?? DEFAULT_SUBAGENT_POLICY,
     routingPolicy: {
       maxToolRounds: SUBAGENT_MAX_TOOL_ROUNDS,
       repeatCallLimit: 2,
@@ -77,25 +86,19 @@ export function buildSubagentConfig(modelProfile: ModelProfile, apiKey: string):
 }
 
 /**
- * Runs an ephemeral child agent with an isolated session/context on SUBAGENT_MODEL.
+ * Runs an ephemeral child agent with an isolated session/context.
  * The factory avoids importing Agent here (circular dependency with tools).
  */
 export async function runSubagentTask(options: SubagentRunnerOptions): Promise<SubagentRunResult> {
-  const modelId = readSubagentModelId(options.env);
-  if (!modelId) {
-    throw new Error(
-      `${SUBAGENT_MODEL_ENV} is not set. Configure a cheaper model id before using ${DELEGATE_TASK_TOOL_NAME}.`
-    );
-  }
-
-  const modelProfile = await resolveModelProfile({ cliModel: modelId });
-  const apiKey = resolveApiKeyForProfile(modelProfile);
-  const config = buildSubagentConfig(modelProfile, apiKey);
+  const modelProfile = options.modelProfile;
+  const apiKey = options.apiKey;
+  const policy = options.policy ?? DEFAULT_SUBAGENT_POLICY;
+  const config = buildSubagentConfig(modelProfile, apiKey, policy);
   const child = options.createAgent(config);
   const sessionId = randomUUID();
 
   child.setSessionId(sessionId);
-  child.setMode('ask');
+  child.setPolicy(policy);
   await child.init();
 
   const result = await child.chat(options.task.trim(), {

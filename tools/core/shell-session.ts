@@ -1,6 +1,33 @@
 import fs from 'fs';
 import path from 'path';
-import { findWorkspaceRoot, getActiveWorkspaceRoot } from '../../infrastructure/persistence/workspace-trust.js';
+
+let activeWorkspaceRoot: string | null = null;
+
+/** Optional cwd anchor set by the host (e.g. CLI) for shell cd resolution. */
+export function setActiveWorkspaceRoot(root: string | null): void {
+  activeWorkspaceRoot = root;
+}
+
+function getActiveWorkspaceRoot(): string | null {
+  return activeWorkspaceRoot;
+}
+
+function findWorkspaceRoot(startDir?: string): string | null {
+  let dir = path.resolve(startDir ?? process.cwd());
+  const root = path.parse(dir).root;
+
+  while (true) {
+    if (fs.existsSync(path.join(dir, '.git'))) return dir;
+    if (fs.existsSync(path.join(dir, 'package.json'))) return dir;
+    const dataDir = path.join(dir, 'data');
+    if (fs.existsSync(dataDir) && fs.existsSync(path.join(dataDir, 'configs'))) return dir;
+
+    if (dir === root) break;
+    dir = path.dirname(dir);
+  }
+
+  return null;
+}
 
 const sessions = new Map<string, string>();
 const sessionAnchors = new Map<string, string>();

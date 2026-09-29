@@ -2,7 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { isMcpHttpServerDef, loadMcpConfig, type McpServerDef } from '../persistence/mcp-config.js';
+import { isMcpHttpServerDef, type McpServerDef } from '../../domain/mcp.js';
 import type { ToolDefinition } from '../../tools/core/types.js';
 import { bridgeMcpTool } from './mcp-tool-bridge.js';
 
@@ -54,14 +54,11 @@ class McpClientManager {
   private connections = new Map<string, McpConnection>();
   private states = new Map<string, McpServerState>();
 
-  /** Disconnects all current connections, reads the config fresh, and reconnects every enabled server. */
-  async connectAll(): Promise<Record<string, ToolDefinition>> {
+  /** Disconnects all current connections and reconnects every server in `servers`. */
+  async connectAll(servers: Record<string, McpServerDef>): Promise<Record<string, ToolDefinition>> {
     await this.disconnectAll();
-    const config = loadMcpConfig();
-    const entries = Object.entries(config.mcpServers);
-
+    const entries = Object.entries(servers);
     await Promise.all(entries.map(([id, def]) => this.connect(id, def)));
-
     return this.getTools();
   }
 

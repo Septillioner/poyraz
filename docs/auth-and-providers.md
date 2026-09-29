@@ -1,8 +1,36 @@
 # Auth and providers
 
-Poyraz never ships with API keys. Your app supplies credentials via the environment, `~/.poyraz/.env`, and optional project `.env` files.
+Poyraz never ships with API keys and does not manage `.env` or `~/.poyraz`. Your app (or `poyraz-cli`) supplies credentials explicitly.
 
-## Provider env keys
+## Passing keys
+
+```ts
+import {
+  AgentBuilder,
+  openAiProfile,
+  resolveApiKeyForProfile,
+  type ProviderApiKeys,
+} from 'poyraz';
+
+const keys: ProviderApiKeys = {
+  openai: process.env.OPENAI_API_KEY,
+  groq: process.env.GROQ_API_KEY,
+  gemini: process.env.GEMINI_API_KEY,
+  openrouter: process.env.OPENROUTER_API_KEY,
+};
+
+const profile = openAiProfile('gpt-4o-mini');
+const apiKey = resolveApiKeyForProfile(profile, keys);
+
+const agent = new AgentBuilder()
+  .WithModelProfile(profile)
+  .ApiKey(apiKey)
+  .Build();
+```
+
+`resolveApiKeyForProfile(profile, keys)` requires an explicit `ProviderApiKeys` object — it does not read `process.env`.
+
+## Provider env key names (convention)
 
 | Provider | Environment variable | Secret |
 |----------|----------------------|--------|
@@ -12,27 +40,7 @@ Poyraz never ships with API keys. Your app supplies credentials via the environm
 | OpenRouter | `OPENROUTER_API_KEY` | yes |
 | Ollama | `OLLAMA_HOST` | no (host URL) |
 
-## Home directory
-
-```text
-~/.poyraz/
-  .env          # auth and other env vars
-  mcp.json      # MCP servers — see mcp.md
-  data/
-    configs/
-      templates/  # agent templates
-```
-
-Typical startup:
-
-```ts
-import { ensurePoyrazHome, loadAllEnv, maskSecret } from 'poyraz';
-
-ensurePoyrazHome();
-loadAllEnv(); // loads ~/.poyraz/.env, then project .env files up the tree
-```
-
-Use `maskSecret` when showing keys in a UI. Related helpers: `resolvePoyrazHomeDir`, `resolvePoyrazEnvPath`, `setEnvVar`, `unsetEnvVar`, `readPoyrazAuthValues`.
+Loading and persisting these values (including `~/.poyraz/.env`) belongs in the host app. See `poyraz-cli` docs for the reference CLI approach.
 
 ## Model profiles
 
@@ -43,11 +51,11 @@ import {
   geminiProfile,
   openRouterProfile,
   ollamaProfile,
-  resolveApiKeyForProfile,
+  inferProfileForModel,
 } from 'poyraz';
 
 const profile = openAiProfile('gpt-4o-mini');
-const apiKey = resolveApiKeyForProfile(profile); // from env
+const inferred = inferProfileForModel('gpt-4o-mini', keys);
 ```
 
 Default API hosts:
@@ -60,26 +68,34 @@ Default API hosts:
 | OpenRouter | `https://openrouter.ai/api/v1` |
 | Ollama | `http://127.0.0.1:11434` |
 
-OpenRouter app headers can be overridden with `OPENROUTER_HTTP_REFERER` and `OPENROUTER_APP_TITLE`.
+OpenRouter app headers: `openRouterDefaultHeaders({ referer?, title? })`.
 
-## Picking a model by id
+## Listing models
 
 ```ts
-import { inferProfileForModel, listAggregatedChatModels } from 'poyraz';
+import { listAggregatedChatModels, type ListChatModelsEnv } from 'poyraz';
 
-const profile = inferProfileForModel('gpt-4o-mini');
-// listAggregatedChatModels() — list models from providers you have keys for
+const env: ListChatModelsEnv = {
+  openAiApiKey: keys.openai,
+  groqApiKey: keys.groq,
+  geminiApiKey: keys.gemini,
+  openRouterApiKey: keys.openrouter,
+  ollamaHost: process.env.OLLAMA_HOST,
+};
+const models = await listAggregatedChatModels(env);
 ```
-
-Also available: `resolveModelProfile` / `resolveModelProfileSync`.
 
 ## Custom provider instance
 
-Most apps use `WithModelProfile` and let the agent create the provider. If you need control:
-
 ```ts
-import { createLLMProvider, openAiProfile, resolveApiKeyForProfile } from 'poyraz';
+import { createLLMProvider, openAiProfile } from 'poyraz';
 
 const profile = openAiProfile('gpt-4o-mini');
-const provider = createLLMProvider(profile, resolveApiKeyForProfile(profile));
+const provider = createLLMProvider(profile, apiKey);
+```
+
+## Switching models at runtime
+
+```ts
+agent.setModelProfile(profile, apiKey);
 ```

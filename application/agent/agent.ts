@@ -2,10 +2,7 @@ import { logger } from '../../shared/logger.js';
 import type { ChatMessage, LLMProvider, TokenUsage } from '../../domain/llm.js';
 import type { ModelProfile } from '../../domain/model-profile.js';
 import { createLLMProvider } from '../../infrastructure/llm/create-provider.js';
-import {
-  inferProviderFromHost,
-  resolveApiKeyForProfile,
-} from '../../domain/model-profile.js';
+import { inferProviderFromHost } from '../../domain/model-profile.js';
 import { toolRegistry } from '../../tools/core/registry.js';
 // Side-effect: register built-in tools before resolveAgentTools reads the registry.
 import '../../tools/index.js';
@@ -25,7 +22,6 @@ import {
   writeChatDebugLog,
   type ChatDebugLogSource,
 } from '../../infrastructure/persistence/chat-debug-log.js';
-import { taskRepository } from '../../infrastructure/persistence/task-repository.js';
 import { formatCurrentTodosPromptBlock } from '../../presentation/ui/todo-table.js';
 import { resolvePersona } from './identity-resolver.js';
 import {
@@ -34,18 +30,17 @@ import {
   resolveRepeatCallLimit,
 } from './tool-resolver.js';
 import type { AgentConfig } from './config.js';
+import type { AgentDelegationConfig } from './config.js';
 import {
-  AGENT_MODES,
-  DEFAULT_AGENT_MODE,
-  resolveModeDenied,
-  resolveModeTools,
-  type AgentMode,
-} from '../../domain/agent-mode.js';
+  DEFAULT_AGENT_POLICY,
+  resolvePolicyDenied,
+  resolvePolicyTools,
+  type AgentPolicy,
+} from '../../domain/agent-policy.js';
+import type { TodoStore } from '../../domain/todo-store.js';
+import { createInMemoryTodoStore } from '../../infrastructure/persistence/in-memory-todo-store.js';
 import type { TodoSnapshot } from '../../domain/task.js';
-import {
-  DELEGATE_TASK_TOOL_NAME,
-  isSubagentModelConfigured,
-} from '../services/subagent-constants.js';
+import { DELEGATE_TASK_TOOL_NAME } from '../services/subagent-constants.js';
 import { SubagentJobManager } from '../services/subagent-job-manager.js';
 
 export type { AgentConfig };
@@ -60,7 +55,8 @@ export class Agent {
   private name: string;
   private cachedToolSchemas: any[] = [];
   private policyConfig: ToolRoutingPolicy;
-  private mode: AgentMode = DEFAULT_AGENT_MODE;
+  private policy: AgentPolicy;
+  private todoStore: TodoStore;
   private context = createMessageContext({ limit: 50, autoSummary: false, totalCapacity: 128000 });
   private stats = createTokenStats();
   private sessionId?: string;
@@ -84,11 +80,14 @@ export class Agent {
       num_ctx: 4096,
       ...(config.options || {}),
     };
+    this.policy = config.policy ?? { ...DEFAULT_AGENT_POLICY };
+    this.todoStore = config.todoStore ?? createInMemoryTodoStore();
     this.policyConfig = {
       maxToolRounds: resolveMaxToolRounds(config),
       repeatCallLimit: resolveRepeatCallLimit(config),
       deterministicMode: config.routingPolicy?.deterministicMode ?? true,
-      mode: this.mode,
+      deniedToolReason: this.policy.deniedToolReason,
+      perTurnToolLimits: this.policy.perTurnToolLimits,
     };
     this.context = createMessageContext({
       limit: config.contextLimit || 50,
@@ -111,6 +110,7 @@ export class Agent {
     this.baseTools = resolveAgentTools(config);
     this.tools = {};
     this.syncDelegationTool();
+    this.applyPolicy();
 
     if (config.logLevel !== undefined) {
       logger.setLevel(config.logLevel);
@@ -118,23 +118,21 @@ export class Agent {
   }
 
   /**
-   * Adds or removes `delegate_task` from the live tool set based on SUBAGENT_MODEL.
-   * Call after changing process.env so delegation works without restarting the process.
+   * Adds or removes `delegate_task` from the live tool set based on agent delegation config.
    */
   syncDelegationTool(): void {
-    const shouldHave =
-      isSubagentModelConfigured() && this.templateAllowsDelegationTool();
+    const shouldHave = Boolean(this.config.delegation) && this.templateAllowsDelegationTool();
 
     if (!shouldHave) {
       if (this.subagentJobs.isRunning()) {
-        this.subagentJobs.cancel('subagent model cleared');
+        this.subagentJobs.cancel('delegation cleared');
       }
       if (this.subagentJobs.isBusy() || this.subagentJobs.isRunning()) {
         this.subagentJobs.reset();
       }
       if (!this.baseTools[DELEGATE_TASK_TOOL_NAME]) return;
       delete this.baseTools[DELEGATE_TASK_TOOL_NAME];
-      this.applyMode();
+      this.applyPolicy();
       this.rebuildSystemPrompt();
       return;
     }
@@ -147,8 +145,17 @@ export class Agent {
       this.baseTools[DELEGATE_TASK_TOOL_NAME] = def;
     }
 
-    this.applyMode();
+    this.applyPolicy();
     this.rebuildSystemPrompt();
+  }
+
+  setDelegation(delegation: AgentDelegationConfig | null): void {
+    this.config.delegation = delegation ?? undefined;
+    this.syncDelegationTool();
+  }
+
+  getDelegation(): AgentDelegationConfig | undefined {
+    return this.config.delegation;
   }
 
   getSubagentJobStatus() {
@@ -197,8 +204,8 @@ export class Agent {
     return Boolean(resolveAgentTools(this.config)[DELEGATE_TASK_TOOL_NAME]);
   }
 
-  private applyMode(): void {
-    const allowed = resolveModeTools(Object.keys(this.baseTools), this.mode);
+  private applyPolicy(): void {
+    const allowed = resolvePolicyTools(Object.keys(this.baseTools), this.policy);
     const nextTools: Record<string, ToolDefinition> = {};
     for (const name of allowed) {
       const tool = this.baseTools[name];
@@ -206,8 +213,9 @@ export class Agent {
     }
     this.tools = nextTools;
     this.cachedToolSchemas = toolRegistry.toOpenAISchemas(Object.keys(this.tools));
-    this.policyConfig.deniedTools = resolveModeDenied(Object.keys(this.baseTools), this.mode);
-    this.policyConfig.mode = this.mode;
+    this.policyConfig.deniedTools = resolvePolicyDenied(Object.keys(this.baseTools), this.policy);
+    this.policyConfig.deniedToolReason = this.policy.deniedToolReason;
+    this.policyConfig.perTurnToolLimits = this.policy.perTurnToolLimits;
   }
 
   /**
@@ -219,7 +227,7 @@ export class Agent {
       toolRegistry.register(tool);
     }
     this.baseTools = { ...this.baseTools, ...tools };
-    this.applyMode();
+    this.applyPolicy();
     this.rebuildSystemPrompt();
   }
 
@@ -234,23 +242,23 @@ export class Agent {
       nextBaseTools[name] = tool;
     }
     this.baseTools = nextBaseTools;
-    this.applyMode();
+    this.applyPolicy();
     this.rebuildSystemPrompt();
   }
 
-  getMode(): AgentMode {
-    return this.mode;
+  getPolicy(): AgentPolicy {
+    return this.policy;
   }
 
-  setMode(mode: AgentMode): void {
-    this.mode = mode;
-    this.applyMode();
+  setPolicy(policy: AgentPolicy): void {
+    this.policy = policy;
+    this.applyPolicy();
     this.rebuildSystemPrompt();
   }
 
   rebuildSystemPrompt(): BuiltSystemPrompt {
     const built = buildSystemPrompt({
-      modeDirective: AGENT_MODES[this.mode].directive,
+      modeDirective: this.policy.directive,
       persona: resolvePersona(this.config),
       activeToolsSection: buildActiveToolsSection(
         Object.keys(this.tools),
@@ -345,11 +353,11 @@ export class Agent {
     };
   }
 
-  setModelProfile(profile: ModelProfile): void {
+  setModelProfile(profile: ModelProfile, apiKey: string): void {
     this.model = profile.model;
     this.config.host = profile.host;
-    this.config.apiKey = resolveApiKeyForProfile(profile);
-    this.provider = createLLMProvider(profile, this.config.apiKey);
+    this.config.apiKey = apiKey;
+    this.provider = createLLMProvider(profile, apiKey);
     this.rebuildSystemPrompt();
   }
 
@@ -362,11 +370,11 @@ export class Agent {
   }
 
   async getTodoSnapshot(): Promise<TodoSnapshot> {
-    return taskRepository.getSnapshot(this.sessionId);
+    return this.todoStore.getSnapshot(this.sessionId);
   }
 
-  getCachedTodoSnapshot(): TodoSnapshot {
-    return taskRepository.getCachedSnapshot(this.sessionId);
+  getCachedTodoSnapshot(): TodoSnapshot | null {
+    return this.todoStore.getCachedSnapshot(this.sessionId);
   }
 
   setChatLogSource(source: ChatDebugLogSource) {
@@ -428,7 +436,7 @@ export class Agent {
           policy: this.policyConfig,
           promptCacheKey: this.getPromptCacheKey(),
           promptCacheRetention: this.config.promptCacheRetention,
-          mode: this.mode,
+          agentPolicy: this.policy,
         },
         this.tools,
         policyGuard,
@@ -500,10 +508,11 @@ export class Agent {
     this.toolContext.logger = logger;
     this.toolContext.sessionId = this.sessionId;
     this.toolContext.abortSignal = this.activeAbortSignal;
+    this.toolContext.todoStore = this.todoStore;
     this.toolContext.refreshSystemPrompt = () => {
       this.rebuildSystemPrompt();
     };
-    this.toolContext.delegateTask = isSubagentModelConfigured()
+    this.toolContext.delegateTask = this.config.delegation
       ? async (task: string) =>
           this.subagentJobs.start({
             task,
@@ -511,6 +520,8 @@ export class Agent {
             parentSignal: this.activeAbortSignal,
             onEvent: (event) => this.emitSubagentEvent(event),
             onUsage: (usage) => this.recordExternalUsage(usage),
+            modelProfile: this.config.delegation!.modelProfile,
+            apiKey: this.config.delegation!.apiKey,
           })
       : undefined;
     return this.toolContext;

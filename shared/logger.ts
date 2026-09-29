@@ -25,6 +25,7 @@ export interface FileLoggingConfig {
 
 class Logger {
   private logFile: string | null = null;
+  private logDir: string | null = null;
   private fileLoggingEnabled = false;
   private currentLevel: LogLevel = LogLevel.INFO;
 
@@ -32,6 +33,7 @@ class Logger {
     this.fileLoggingEnabled = config.enabled;
     if (!config.enabled || !config.logDir) {
       this.logFile = null;
+      this.logDir = null;
       return;
     }
 
@@ -39,7 +41,16 @@ class Logger {
       mkdirSync(config.logDir, { recursive: true });
     }
 
+    this.logDir = config.logDir;
     this.logFile = path.join(config.logDir, 'agent.log');
+  }
+
+  getLogDir(): string | null {
+    return this.fileLoggingEnabled ? this.logDir : null;
+  }
+
+  isFileLoggingEnabled(): boolean {
+    return this.fileLoggingEnabled;
   }
 
   setLevel(level: LogLevel) {
@@ -90,4 +101,12 @@ export const logger = new Logger();
 
 export function configureFileLogging(config: FileLoggingConfig): void {
   logger.configureFileLogging(config);
+}
+
+export function getConfiguredLogDir(): string | null {
+  return logger.getLogDir();
+}
+
+export function isFileLoggingEnabled(): boolean {
+  return logger.isFileLoggingEnabled();
 }

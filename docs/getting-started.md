@@ -1,86 +1,41 @@
 # Getting started
 
-Integrate Poyraz in a Node.js app in a few steps.
-
-## Requirements
-
-- Node.js **>= 20**
-- An API key for a cloud provider, **or** a running [Ollama](https://ollama.com/) instance
-
-## Install
-
 ```bash
 npm install poyraz
 ```
 
-## Configure credentials
+Requires Node.js **>= 20**.
 
-Set one of:
-
-| Provider | Environment variable |
-|----------|----------------------|
-| OpenAI | `OPENAI_API_KEY` |
-| Groq | `GROQ_API_KEY` |
-| Gemini | `GEMINI_API_KEY` |
-| OpenRouter | `OPENROUTER_API_KEY` |
-| Ollama | `OLLAMA_HOST` (optional; default `http://127.0.0.1:11434`) |
-
-You can store the same keys in `~/.poyraz/.env`. Call `loadAllEnv()` at startup if you want Poyraz to load that file (and project `.env` files) into `process.env`. See [Auth and providers](auth-and-providers.md).
-
-## Your first agent
+## Minimal agent
 
 ```ts
-import { AgentBuilder, openAiProfile, loadAllEnv } from 'poyraz';
+import { AgentBuilder, openAiProfile, resolveApiKeyForProfile } from 'poyraz';
 
-loadAllEnv();
+const profile = openAiProfile('gpt-4o-mini');
+const apiKey = resolveApiKeyForProfile(profile, {
+  openai: process.env.OPENAI_API_KEY,
+});
 
 const agent = new AgentBuilder()
   .Name('demo')
-  .WithModelProfile(openAiProfile('gpt-4o-mini'))
+  .WithModelProfile(profile)
+  .ApiKey(apiKey)
   .WithPresets('filesystem', 'shell', 'search', 'planning')
   .Build();
 
 await agent.init();
 
-const { content, usage } = await agent.chat('Summarize the files in this directory.');
+const { content } = await agent.chat('List files in the current directory.');
 console.log(content);
-console.log(usage);
 ```
 
-### Other providers
-
-```ts
-import {
-  AgentBuilder,
-  groqProfile,
-  geminiProfile,
-  openRouterProfile,
-  ollamaProfile,
-} from 'poyraz';
-
-new AgentBuilder().WithModelProfile(groqProfile('llama-3.3-70b-versatile'));
-new AgentBuilder().WithModelProfile(geminiProfile('gemini-2.0-flash'));
-new AgentBuilder().WithModelProfile(openRouterProfile('anthropic/claude-sonnet-4'));
-new AgentBuilder().WithModelProfile(ollamaProfile('llama3.2'));
-// or: new AgentBuilder().LocalModel('llama3.2')
-```
-
-## Modes
-
-Default mode is `agent` (full access to the tools you configured). Change per turn as needed:
-
-```ts
-agent.setMode('plan'); // read + todos only
-agent.setMode('ask');  // read-only
-agent.setMode('chat'); // no tools
-```
-
-See [Modes](modes.md).
+The library does not load `.env` files. Pass keys (and optional `TodoStore`, `AgentPolicy`, MCP server defs) from your host.
 
 ## Next steps
 
-- [How it works](how-it-works.md) — runtime model
-- [Agent API](agent-api.md) — builder and agent methods
-- [Tools](tools.md) — presets and built-ins
-- [Streaming](streaming.md) — wire events into your UI
-- [MCP](mcp.md) — external tools
+- [Auth and providers](auth-and-providers.md)
+- [Agent policy](modes.md) (generic policies; CLI modes live in poyraz-cli)
+- [Tools](tools.md)
+- [MCP](mcp.md)
+- [Subagents](subagents.md)
+- [Agent API](agent-api.md)

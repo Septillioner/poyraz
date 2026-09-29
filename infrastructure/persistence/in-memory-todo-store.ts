@@ -1,6 +1,3 @@
-import fs from 'fs/promises';
-import { existsSync, mkdirSync } from 'fs';
-import path from 'path';
 import {
   type TodoItem,
   type TodoSnapshot,
@@ -9,9 +6,8 @@ import {
   formatTodoLines,
   isOpenTodoStatus,
   isTerminalTodoStatus,
-  normalizeTodoItem,
 } from '../../domain/task.js';
-import { resolveProjectDataDir } from './paths.js';
+import type { TodoStore } from '../../domain/todo-store.js';
 
 export class TodoValidationError extends Error {
   constructor(message: string) {
@@ -20,47 +16,17 @@ export class TodoValidationError extends Error {
   }
 }
 
-export class TaskRepository {
+export class InMemoryTodoStore implements TodoStore {
   private readonly cache = new Map<string, TodoItem[]>();
 
   private cacheKey(sessionId?: string): string {
     return sessionId || 'default';
   }
 
-  private getTasksDir(): string {
-    const tasksDir = path.join(resolveProjectDataDir(), 'storage', 'tasks');
-    if (!existsSync(tasksDir)) {
-      mkdirSync(tasksDir, { recursive: true });
-    }
-    return tasksDir;
-  }
-
-  private getFilePath(sessionId?: string): string {
-    const fileName = sessionId ? `${sessionId}.json` : 'tasks.json';
-    return path.join(this.getTasksDir(), fileName);
-  }
-
-  private async loadFromDisk(sessionId?: string): Promise<TodoItem[]> {
-    const filePath = this.getFilePath(sessionId);
-    try {
-      const data = await fs.readFile(filePath, 'utf-8');
-      const parsed = JSON.parse(data);
-      if (!Array.isArray(parsed)) return [];
-      return parsed
-        .map((item) => normalizeTodoItem(item))
-        .filter((item): item is TodoItem => item !== null);
-    } catch {
-      return [];
-    }
-  }
-
   async list(sessionId?: string): Promise<TodoItem[]> {
     const key = this.cacheKey(sessionId);
-    if (!this.cache.has(key)) {
-      const loaded = await this.loadFromDisk(sessionId);
-      this.cache.set(key, loaded);
-    }
-    return this.cache.get(key)!.map((t) => ({ ...t }));
+    const todos = this.cache.get(key) ?? [];
+    return todos.map((t) => ({ ...t }));
   }
 
   async getSnapshot(sessionId?: string): Promise<TodoSnapshot> {
@@ -68,9 +34,9 @@ export class TaskRepository {
     return buildTodoSnapshot(todos);
   }
 
-  /** In-memory snapshot only (empty if never loaded for this session). */
-  getCachedSnapshot(sessionId?: string): TodoSnapshot {
+  getCachedSnapshot(sessionId?: string): TodoSnapshot | null {
     const key = this.cacheKey(sessionId);
+    if (!this.cache.has(key)) return null;
     const todos = this.cache.get(key) ?? [];
     return buildTodoSnapshot(todos.map((t) => ({ ...t })));
   }
@@ -92,15 +58,8 @@ export class TaskRepository {
       key,
       validated.map((t) => ({ ...t }))
     );
-    const filePath = this.getFilePath(sessionId);
-    await fs.writeFile(filePath, JSON.stringify(validated, null, 2), 'utf-8');
   }
 
-  /**
-   * Replace or merge todos for a session.
-   * merge=false clears and writes the new list.
-   * merge=true updates by id with transition checks.
-   */
   async writeTodos(
     incoming: TodoItem[],
     options: { merge: boolean; sessionId?: string }
@@ -145,9 +104,7 @@ export class TaskRepository {
         id: update.id,
         content: update.content || current.content,
         status: update.status,
-        ...(update.status === 'blocked'
-          ? { blockedReason: update.blockedReason }
-          : {}),
+        ...(update.status === 'blocked' ? { blockedReason: update.blockedReason } : {}),
       });
     }
 
@@ -191,9 +148,7 @@ export class TaskRepository {
     }
 
     if (inProgressCount > 1) {
-      throw new TodoValidationError(
-        'At most one todo may be in_progress at a time.'
-      );
+      throw new TodoValidationError('At most one todo may be in_progress at a time.');
     }
 
     return normalized;
@@ -205,4 +160,6 @@ export function formatPersistedTodos(todos: TodoItem[]): string {
   return `Todos updated (${todos.length} items):\n${formatTodoLines(todos)}`;
 }
 
-export const taskRepository = new TaskRepository();
+export function createInMemoryTodoStore(): TodoStore {
+  return new InMemoryTodoStore();
+}

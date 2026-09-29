@@ -2,11 +2,11 @@ import { z } from 'zod';
 import { defineTool } from '../core/define-tool.js';
 import { withPresentation } from '../core/presentations.js';
 import type { TodoItem } from '../../domain/task.js';
+import type { TodoStore } from '../../domain/todo-store.js';
 import {
   formatPersistedTodos,
-  taskRepository,
   TodoValidationError,
-} from '../../infrastructure/persistence/task-repository.js';
+} from '../../infrastructure/persistence/in-memory-todo-store.js';
 import { createToolError, serializeToolError, TOOL_ERROR_CODES } from '../../application/chat/tool-errors.js';
 
 export const todoWriteSchema = z.object({
@@ -37,7 +37,11 @@ export const todoWriteSchema = z.object({
     .describe('Array of todo items to write.'),
 });
 
-export async function todoWrite(args: z.infer<typeof todoWriteSchema>, sessionId?: string) {
+export async function todoWrite(
+  args: z.infer<typeof todoWriteSchema>,
+  sessionId: string | undefined,
+  store: TodoStore
+) {
   const incoming: TodoItem[] = args.todos.map((todo) => ({
     id: todo.id,
     content: todo.content,
@@ -46,7 +50,7 @@ export async function todoWrite(args: z.infer<typeof todoWriteSchema>, sessionId
   }));
 
   try {
-    const saved = await taskRepository.writeTodos(incoming, {
+    const saved = await store.writeTodos(incoming, {
       merge: args.merge ?? false,
       sessionId,
     });
@@ -78,7 +82,18 @@ export const planningToolDefinitions = [
       'Set merge to false when replacing the list; true when updating existing items by id. ' +
       'In Plan mode call at most once per user turn (merge false) to record the full plan.',
     inputSchema: todoWriteSchema,
-    execute: (args, ctx) => todoWrite(args, ctx.sessionId),
+    execute: async (args, ctx) => {
+      if (!ctx.todoStore) {
+        return serializeToolError(
+          createToolError(
+            TOOL_ERROR_CODES.configurationError,
+            'todo_write is unavailable. Configure a todo store on the agent.',
+            { toolName: 'todo_write' }
+          )
+        );
+      }
+      return todoWrite(args, ctx.sessionId, ctx.todoStore);
+    },
     presentation: withPresentation('todo_write'),
     meta: { category: 'planning' },
   }),

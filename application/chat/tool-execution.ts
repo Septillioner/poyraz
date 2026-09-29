@@ -201,9 +201,7 @@ export async function executeToolCall(
 
     updateLastReadFile(context, toolName, normalized);
 
-    if (toolName === 'todo_write') {
-      policyGuard.markPlanTodoWriteSuccess();
-    }
+    policyGuard.markToolSuccess(toolName);
 
     const meta =
       normalized.structured && typeof normalized.structured === 'object'

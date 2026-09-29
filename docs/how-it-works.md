@@ -1,48 +1,36 @@
 # How it works
 
-This page describes how Poyraz behaves when you embed it in your app — not the package’s source layout.
+Poyraz is an embeddable agent runtime: LLM interface, tool registry, context management, MCP bridge, and a policy-driven decision loop.
+
+## Layering
+
+| Layer | Responsibility |
+|-------|----------------|
+| domain | Pure types: tasks, LLM messages, `AgentPolicy`, `TodoStore`, MCP defs, model profiles |
+| application | `Agent`, decision loop, prompts, summarizer, subagent runner |
+| infrastructure | LLM providers, in-memory todo store, MCP client, chat debug log |
+| tools | Built-in tool definitions |
+| presentation | Todo table / activity tracker helpers |
+
+## What the library does **not** do
+
+- Load or write `.env` / `~/.poyraz`
+- Resolve home or project `data/` paths
+- Persist MCP server lists, session prefs, or templates to disk
+- Define CLI modes (`agent` / `plan` / `ask` / `chat`) — hosts build `AgentPolicy` values
+
+Those belong in `poyraz-cli` (or your own host).
 
 ## Runtime flow
 
-```mermaid
-flowchart LR
-  YourApp[YourApp] --> Agent[Agent]
-  Agent --> Provider[LLMProvider]
-  Agent --> Tools[Tools]
-  Agent --> Home["~/.poyraz"]
+1. Host builds an `Agent` with explicit `apiKey`, optional `TodoStore`, `AgentPolicy`, `delegation`.
+2. Host may call `mcpClientManager.connectAll(servers)` and `agent.mergeExternalTools`.
+3. `agent.chat` runs the decision loop: model → tools (policy-filtered) → optional response gates → context summarization.
+4. Streaming events are emitted for UI hosts.
+
+## Persistence injection
+
+```ts
+agent // uses createInMemoryTodoStore() by default
+new AgentBuilder().TodoStore(myFileBackedStore)
 ```
-
-1. You configure an agent with `AgentBuilder` (model, tools, identity, routing).
-2. `Build()` returns an `Agent`. Call `init()`, then `chat()`.
-3. Each turn the model may call tools; Poyraz runs them, applies **mode** and **routing** policy, and streams events to your handlers.
-4. Credentials and MCP config are read from the environment and/or `~/.poyraz/`.
-
-## Pieces you interact with
-
-| Piece | Role in your app |
-|-------|------------------|
-| `AgentBuilder` / `Agent` | Configure and run conversations |
-| Model profiles | Pick OpenAI, Groq, Gemini, OpenRouter, or Ollama |
-| Tool presets / custom tools | What the model is allowed to call |
-| Modes | Restrict tools per turn (`agent`, `plan`, `ask`, `chat`) |
-| `ChatHandlers` | Stream text and tool events into your UI |
-| `~/.poyraz` | Global auth (`.env`), MCP (`mcp.json`), synced templates |
-| Project `.poyraz/` | Optional trust flag and file logs for a workspace |
-
-## Chat turn (simplified)
-
-1. User message enters `agent.chat`.
-2. System prompt includes identity, mode directive, tool guidance, and current todos when relevant.
-3. The provider streams tokens; tool calls are executed under policy (max rounds, repeat limits, mode denylists).
-4. The turn ends with assistant text and token usage; you can abort via `AbortSignal`.
-
-## Data on disk
-
-| Location | Used for |
-|----------|----------|
-| `~/.poyraz/.env` | API keys and related env vars |
-| `~/.poyraz/mcp.json` | MCP server definitions |
-| `~/.poyraz/data/configs/templates/` | Synced / custom agent templates |
-| `<project>/.poyraz/` | Workspace trust and logs (when you enable them) |
-
-See [Auth and providers](auth-and-providers.md), [Workspace](workspace.md), and [Agent API](agent-api.md).

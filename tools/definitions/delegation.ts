@@ -6,10 +6,7 @@ import {
   serializeToolError,
   TOOL_ERROR_CODES,
 } from '../../application/chat/tool-errors.js';
-import {
-  DELEGATE_TASK_TOOL_NAME,
-  SUBAGENT_MODEL_ENV,
-} from '../../application/services/subagent-constants.js';
+import { DELEGATE_TASK_TOOL_NAME } from '../../application/services/subagent-constants.js';
 
 export const delegateTaskSchema = z.object({
   task: z
@@ -30,7 +27,7 @@ export const delegationToolDefinitions = [
       'Use for large searches, multi-file surveys, or gathering evidence before you implement. ' +
       'Do NOT use for trivial one-file reads, writing/editing files, shell commands, or todos. ' +
       'Write a complete standalone task brief; the subagent cannot see the parent conversation. ' +
-      `Requires ${SUBAGENT_MODEL_ENV} to be configured.`,
+      'Requires delegation to be configured on the agent.',
     inputSchema: delegateTaskSchema,
     execute: async (args, ctx) => {
       const task = typeof args.task === 'string' ? args.task.trim() : '';
@@ -46,8 +43,8 @@ export const delegationToolDefinitions = [
         return serializeToolError(
           createToolError(
             TOOL_ERROR_CODES.configurationError,
-            `${DELEGATE_TASK_TOOL_NAME} is unavailable. Set ${SUBAGENT_MODEL_ENV} to a cheaper model id (CLI: /model subagent).`,
-            { toolName: DELEGATE_TASK_TOOL_NAME, env: SUBAGENT_MODEL_ENV }
+            `${DELEGATE_TASK_TOOL_NAME} is unavailable. Configure agent delegation before use.`,
+            { toolName: DELEGATE_TASK_TOOL_NAME }
           )
         );
       }

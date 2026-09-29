@@ -1,66 +1,41 @@
 # MCP
 
-Attach [Model Context Protocol](https://modelcontextprotocol.io/) servers so their tools appear on your agent.
+The library connects to MCP servers you pass in. It does **not** read or write `~/.poyraz/mcp.json` — that is a host concern (`poyraz-cli` owns the file CRUD).
 
-## Config file
-
-Default path: `~/.poyraz/mcp.json` (`resolveMcpConfigPath()`). Keep tokens here (or inject headers from env) — do not commit secrets into your app repo.
-
-```json
-{
-  "mcpServers": {
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed"],
-      "disabled": false
-    },
-    "remote": {
-      "url": "https://example.com/mcp",
-      "headers": {
-        "Authorization": "Bearer YOUR_TOKEN"
-      },
-      "disabled": false
-    }
-  }
-}
-```
-
-- **stdio:** `command`, optional `args`, `env`, `cwd`, `disabled`
-- **HTTP:** `url`, optional `headers`, `disabled`
-
-Helpers: `loadMcpConfig`, `saveMcpConfig`, `addMcpServer`, `removeMcpServer`, `listMcpServers`, `getMcpServer`, `setMcpServerDisabled`, `isMcpHttpServerDef`.
-
-## Connect and merge into an agent
+## Types
 
 ```ts
-import { AgentBuilder, openAiProfile, mcpClientManager } from 'poyraz';
-
-const agent = new AgentBuilder()
-  .WithModelProfile(openAiProfile('gpt-4o-mini'))
-  .WithPresets('filesystem', 'shell', 'search', 'planning')
-  .Build();
-
-await agent.init();
-
-const mcpTools = await mcpClientManager.connectAll();
-agent.mergeExternalTools(mcpTools);
-
-// later
-agent.removeExternalTools(); // default prefix mcp_
-await mcpClientManager.disconnectAll();
+import type { McpServerDef, McpHttpServerDef, McpStdioServerDef } from 'poyraz';
+import { isMcpHttpServerDef, mcpClientManager } from 'poyraz';
 ```
 
-`mcpClientManager` API:
+## Connect
 
-- `connectAll()` — reload config, connect enabled servers, return merged tools
-- `connect(id, def)` / `disconnect(id)` / `disconnectAll()`
-- `getTools()` — current merged map
-- `listStates()` — `{ id, status, toolCount, error? }` (`connected` \| `error` \| `disabled`)
+```ts
+const servers: Record<string, McpServerDef> = {
+  docs: {
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-filesystem', process.cwd()],
+  },
+  remote: {
+    url: 'https://example.com/mcp',
+    headers: { Authorization: 'Bearer …' },
+  },
+};
 
-## Tool naming
+const tools = await mcpClientManager.connectAll(servers);
+agent.mergeExternalTools(tools);
+```
 
-Bridged tools are named `mcp_<serverId>__<toolName>` (`MCP_TOOL_PREFIX`, `mcpToolName(serverId, toolName)`).
+`connectAll` disconnects existing connections, then connects every enabled entry. Disabled servers (`disabled: true`) are recorded as `disabled` without connecting.
 
-## Modes
+## Tool names
 
-MCP tools are part of the base set but only usable in `agent` mode under the default mode allowlists. See [Modes](modes.md).
+Bridged tools are prefixed (`mcp_<serverId>_<toolName>`). Use `MCP_TOOL_PREFIX` / `mcpToolName` helpers when needed.
+
+## Status
+
+```ts
+const states = mcpClientManager.listStates();
+// { id, status: 'connected' | 'error' | 'disabled', toolCount, error? }
+```

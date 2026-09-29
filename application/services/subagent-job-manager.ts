@@ -10,11 +10,7 @@ import {
   buildSubagentFailureNotice,
   previewSubagentContent,
 } from '../chat/subagent-result-gate.js';
-import {
-  DELEGATE_TASK_TOOL_NAME,
-  SUBAGENT_MODEL_ENV,
-  readSubagentModelId,
-} from './subagent-constants.js';
+import { DELEGATE_TASK_TOOL_NAME } from './subagent-constants.js';
 import {
   runSubagentTask,
   type SubagentChatCapable,
@@ -49,11 +45,12 @@ export interface SubagentJobSnapshot {
 
 export interface SubagentJobStartOptions {
   task: string;
+  modelProfile: ModelProfile;
+  apiKey: string;
   createAgent: (config: AgentConfig) => SubagentChatCapable;
   parentSignal?: AbortSignal;
   onEvent?: (event: AgentStreamEvent) => void;
   onUsage?: (usage: TokenUsage) => void;
-  env?: NodeJS.ProcessEnv;
 }
 
 type PendingKind = 'completed' | 'failed' | 'cancelled';
@@ -107,12 +104,8 @@ export class SubagentJobManager {
       );
     }
 
-    const modelId = readSubagentModelId(options.env);
-    if (!modelId) {
-      throw new Error(
-        `${SUBAGENT_MODEL_ENV} is not set. Configure a cheaper model id before using ${DELEGATE_TASK_TOOL_NAME}.`
-      );
-    }
+    const modelProfile = options.modelProfile;
+    const modelId = modelProfile.model;
 
     const task = options.task.trim();
     const taskId = randomUUID();
@@ -221,7 +214,7 @@ export class SubagentJobManager {
     this.resolveWaiters();
   }
 
-  /** Hard reset used when clearing SUBAGENT_MODEL. */
+  /** Hard reset used when clearing delegation config. */
   reset(): void {
     this.runToken += 1;
     this.childAbort?.abort();
@@ -258,7 +251,8 @@ export class SubagentJobManager {
         task: snap.task,
         createAgent: options.createAgent,
         signal: this.childAbort?.signal,
-        env: options.env,
+        modelProfile: options.modelProfile,
+        apiKey: options.apiKey,
         onEvent: (event) => this.forwardChildEvent(snap.taskId, event, emit),
       });
 

@@ -12,7 +12,7 @@ If you only need to run agents in production, you can ignore this page.
 ## Setup
 
 1. Clone the Poyraz repository.
-2. Install dependencies and set provider keys (`OPENAI_API_KEY`, etc., or `~/.poyraz/.env`).
+2. Install dependencies and set provider keys (`OPENAI_API_KEY`, etc.) in the repo `.env` or your shell. The eval runner loads `.env` itself; it does not use library env helpers.
 3. From the repo root:
 
 ```bash

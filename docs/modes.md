@@ -1,70 +1,62 @@
-# Modes
+# Agent policy
 
-Modes let you change how much the agent can do without rebuilding it. The active mode filters the agent’s **base** tool set and adds a mode-specific system directive.
-
-```ts
-import {
-  AGENT_MODES,
-  AGENT_MODE_CYCLE,
-  DEFAULT_AGENT_MODE,
-  type AgentMode,
-} from 'poyraz';
-
-agent.setMode('plan');
-const mode: AgentMode = agent.getMode(); // 'plan'
-```
-
-Default: `agent` (`DEFAULT_AGENT_MODE`).
-
-Cycle order (`AGENT_MODE_CYCLE`): `agent` → `plan` → `ask` → `chat` → …
-
-Helpers for hosts/CLIs: `isAgentMode`, `resolveAgentMode`, `nextAgentMode`, `resolveModeTools`, `resolveModeDenied`. Full definitions are also on `AGENT_MODES`.
-
-## Mode summary
-
-| Mode | Label | Tools available |
-|------|-------|-----------------|
-| `agent` | Agent | All tools in the base set |
-| `plan` | Plan | `read_file`, `list_dir`, `glob_file_search`, `grep`, `todo_write` |
-| `ask` | Ask | `read_file`, `list_dir`, `glob_file_search`, `grep` |
-| `chat` | Chat | None |
-
-Denied tools are blocked by policy (the model is told to switch to Agent mode — e.g. `/mode agent` in the CLI).
-
-## Behavioral notes
-
-### agent
-
-- Full tool use until the task is done.
-- With an open todo list, the agent is steered not to end the turn while items remain `pending` or `in_progress`.
-- File writes should go through `edit_file`, not large code dumps in chat.
-
-### plan
-
-- Explore with read-only tools; record a plan with one `todo_write` per user turn (`merge: false`).
-- Cannot implement (`edit_file`, `delete_file`, `run_terminal_cmd` denied).
-- Should present a numbered plan and ask the user to switch to Agent mode to apply it.
-- After one successful `todo_write` in plan mode, further `todo_write` calls are blocked for that turn.
-
-### ask
-
-- Answer with read-only tools only.
-- No edits, shell, or todos.
-
-### chat
-
-- Conversation only; no tools.
-
-## External / MCP tools
-
-`mergeExternalTools` adds tools to the **base** set. They are available in `agent` mode. In `plan` / `ask` / `chat` they are filtered out (built-in allowlists do not include `mcp_*` names).
-
-## Switching in your app
+Poyraz does not ship CLI modes (`agent` / `plan` / `ask` / `chat`). Those live in `poyraz-cli`. The library exposes a generic **AgentPolicy** that controls tools, directives, and response gates.
 
 ```ts
-agent.setMode('ask');
-// tools and system prompt refresh automatically
+import { AgentBuilder, DEFAULT_AGENT_POLICY, type AgentPolicy } from 'poyraz';
 
-agent.setMode('agent');
-await agent.chat('Implement the plan.');
+const readOnly: AgentPolicy = {
+  id: 'ask',
+  allowedTools: ['read_file', 'list_dir', 'glob_file_search', 'grep'],
+  hardBlockDeniedTools: true,
+  deniedToolReason: 'This tool is disabled under the active policy.',
+  enforceOpenTodos: false,
+  directive: 'Answer with read-only tools only.',
+};
+
+const agent = new AgentBuilder()
+  .Policy(readOnly)
+  .WithPresets('filesystem', 'search')
+  .Build();
+
+agent.setPolicy({ ...DEFAULT_AGENT_POLICY, id: 'agent', enforceOpenTodos: true });
 ```
+
+## AgentPolicy fields
+
+| Field | Role |
+|-------|------|
+| `id` | Stable policy id (hosts may map this to a UX mode name) |
+| `allowedTools` | `'all'` or an allow-list of tool names |
+| `directive` | Injected as the `[MODE]` system-prompt block |
+| `hardBlockDeniedTools` | When true, circuit breakers hard-stop denied tool loops |
+| `deniedToolReason` | Message returned when a tool is denied |
+| `bufferTextUntilAccepted` | Buffer `text.delta` until a text-only reply passes gates |
+| `perTurnToolLimits` | e.g. `{ todo_write: 1 }` |
+| `enforceOpenTodos` | Continue the loop while open todos remain |
+| `responseGates` | Ordered gates evaluated before accepting a final text reply |
+
+## ResponseGate
+
+```ts
+import type { ResponseGate } from 'poyraz';
+
+const gate: ResponseGate = {
+  maxRetries: 2,
+  evaluate({ content, succeededTools }) {
+    if (content.includes('```') && !succeededTools.has('todo_write')) {
+      return { kind: 'retry', notice: '<system_reminder>Rewrite without code fences.</system_reminder>' };
+    }
+    return { kind: 'accept' };
+  },
+  onExhausted: (content) => content.replace(/```[\s\S]*?```/g, '').trim(),
+};
+```
+
+## Default policy
+
+`DEFAULT_AGENT_POLICY` is `{ id: 'default', allowedTools: 'all', enforceOpenTodos: true }`.
+
+## CLI modes
+
+`poyraz-cli` maps `agent` / `plan` / `ask` / `chat` onto `AgentPolicy` values (including plan response gates). See the CLI `docs/models-and-modes.md`.

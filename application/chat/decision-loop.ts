@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import type { ChatMessage, LLMProvider, TokenUsage } from '../../domain/llm.js';
 import type { AgentStreamEvent } from '../../domain/events.js';
-import type { AgentMode } from '../../domain/agent-mode.js';
+import type { AgentPolicy } from '../../domain/agent-policy.js';
 import type { TodoSnapshot } from '../../domain/task.js';
 import { logger } from '../../shared/logger.js';
 import { assertNotAborted, ChatAbortedError } from '../../shared/chat-aborted.js';
@@ -17,16 +17,6 @@ import {
   buildTodoBudgetExhaustedMessage,
   buildTodoContinuationNotice,
 } from './todo-completion-gate.js';
-import {
-  PLAN_CODE_DUMP_RETRY_BUDGET,
-  PLAN_MISSING_TODO_RETRY_BUDGET,
-  buildPlanCodeDumpExhaustedMessage,
-  buildPlanCodeDumpNotice,
-  buildPlanMissingTodoNotice,
-  looksLikeCodeDump,
-  looksLikePlanStepList,
-} from './plan-response-gate.js';
-
 export const CONSECUTIVE_SAME_TOOL_LIMIT = 3;
 export const TODO_WRITE_CONSECUTIVE_LIMIT = 2;
 export const CONSECUTIVE_SAME_ERROR_LIMIT = 2;
@@ -61,7 +51,7 @@ export interface DecisionLoopDeps {
   policy: { maxToolRounds: number };
   promptCacheKey?: string;
   promptCacheRetention?: 'in_memory' | '24h';
-  mode: AgentMode;
+  agentPolicy: AgentPolicy;
 }
 
 export interface DecisionLoopHandlers {
@@ -99,9 +89,7 @@ function getConsecutiveSameToolLimit(toolName: string): number {
 function buildCircuitBreakerNotice(toolName: string, count: number): string {
   return (
     `NOTICE: '${toolName}' was called ${count} times in a row without progress. ` +
-    'Stop calling tools. Respond to the user in plain text with your plan ' +
-    'or ask what they want. If the task needs file writes, tell them to ' +
-    'switch to Agent mode (/mode agent).'
+    'Stop calling tools. Respond to the user in plain text with your findings or ask what they want next.'
   );
 }
 
@@ -137,8 +125,8 @@ function completePendingToolResponses(handlers: DecisionLoopHandlers): void {
   }
 }
 
-function shouldHardBlockTools(mode: AgentMode): boolean {
-  return mode === 'plan' || mode === 'ask';
+function shouldHardBlockTools(agentPolicy: AgentPolicy): boolean {
+  return Boolean(agentPolicy.hardBlockDeniedTools);
 }
 
 function flushTextDelta(
@@ -163,14 +151,13 @@ export async function runDecisionLoop(
   let consecutiveSameError = 0;
   let lastUsage: TokenUsage | undefined;
   let todoContinuationCount = 0;
-  let planCodeDumpRetries = 0;
-  let planMissingTodoRetries = 0;
+  const gateRetries = new Map<number, number>();
 
   const isToolLoopBlocked = () => circuitBreakerNoticeSent;
-  const bufferPlanText = deps.mode === 'plan';
+  const bufferTextUntilAccepted = Boolean(deps.agentPolicy.bufferTextUntilAccepted);
 
   try {
-    while (round < deps.policy.maxToolRounds) {
+    outer: while (round < deps.policy.maxToolRounds) {
       round++;
       assertNotAborted(handlers.signal);
 
@@ -193,7 +180,7 @@ export async function runDecisionLoop(
           signal: handlers.signal,
         },
         (token) => {
-          if (bufferPlanText) {
+          if (bufferTextUntilAccepted) {
             textBuffer += token;
           } else {
             handlers.onEvent?.({ type: 'text.delta', delta: token });
@@ -220,42 +207,36 @@ export async function runDecisionLoop(
       });
 
       if (!toolCalls?.length) {
-        if (deps.mode === 'plan' && looksLikeCodeDump(response.content)) {
-          if (planCodeDumpRetries < PLAN_CODE_DUMP_RETRY_BUDGET) {
-            planCodeDumpRetries++;
-            logger.warn('Plan code-dump gate: rejecting and retrying', {
-              planCodeDumpRetries,
+        const gates = deps.agentPolicy.responseGates ?? [];
+        for (let gateIndex = 0; gateIndex < gates.length; gateIndex++) {
+          const gate = gates[gateIndex];
+          const verdict = gate.evaluate({
+            content: response.content ?? '',
+            succeededTools: policyGuard.succeededTools(),
+          });
+          if (verdict.kind === 'accept') continue;
+
+          const retries = gateRetries.get(gateIndex) ?? 0;
+          if (retries < gate.maxRetries) {
+            gateRetries.set(gateIndex, retries + 1);
+            logger.warn('Response gate: rejecting and retrying', {
+              gateIndex,
+              retries: retries + 1,
             });
-            // Do not flush textBuffer — user never sees the dump.
-            handlers.addMessage({ role: 'user', content: buildPlanCodeDumpNotice() });
-            continue;
+            handlers.addMessage({ role: 'user', content: verdict.notice });
+            continue outer;
           }
 
-          const sanitized = buildPlanCodeDumpExhaustedMessage(response.content ?? '');
-          logger.warn('Plan code-dump gate: retry budget exhausted; sanitizing');
-          handlers.addMessage({ role: 'assistant', content: sanitized });
-          flushTextDelta(handlers, sanitized);
-          return { content: sanitized, usage: response.usage ?? lastUsage };
-        }
-
-        if (
-          deps.mode === 'plan' &&
-          !policyGuard.didTodoWriteSucceed() &&
-          looksLikePlanStepList(response.content)
-        ) {
-          if (planMissingTodoRetries < PLAN_MISSING_TODO_RETRY_BUDGET) {
-            planMissingTodoRetries++;
-            logger.warn('Plan missing-todo gate: requiring todo_write', {
-              planMissingTodoRetries,
-            });
-            // Hold buffered text until todos are persisted.
-            handlers.addMessage({ role: 'user', content: buildPlanMissingTodoNotice() });
-            continue;
+          if (gate.onExhausted) {
+            const sanitized = gate.onExhausted(response.content ?? '');
+            logger.warn('Response gate: retry budget exhausted; sanitizing', { gateIndex });
+            handlers.addMessage({ role: 'assistant', content: sanitized });
+            flushTextDelta(handlers, sanitized);
+            return { content: sanitized, usage: response.usage ?? lastUsage };
           }
-          logger.warn('Plan missing-todo gate: retry budget exhausted; accepting text plan');
         }
 
-        if (deps.mode === 'agent' && handlers.getTodoSnapshot) {
+        if (deps.agentPolicy.enforceOpenTodos && handlers.getTodoSnapshot) {
           const snapshot = await handlers.getTodoSnapshot();
           if (!snapshot.allTerminal && snapshot.open.length > 0) {
             if (todoContinuationCount >= TODO_CONTINUATION_BUDGET) {
@@ -287,15 +268,13 @@ export async function runDecisionLoop(
           }
         }
 
-        // Accepted text-only reply: flush any Plan-mode buffer to the user.
-        if (bufferPlanText) {
+        if (bufferTextUntilAccepted) {
           flushTextDelta(handlers, textBuffer || response.content || '');
         }
         return { content: response.content, usage: response.usage ?? lastUsage };
       }
 
-      // Tool round: flush any leading assistant text buffered in Plan mode.
-      if (bufferPlanText) {
+      if (bufferTextUntilAccepted) {
         flushTextDelta(handlers, textBuffer || response.content || '');
       }
 
@@ -383,9 +362,9 @@ export async function runDecisionLoop(
         logger.warn('Error circuit breaker triggered', {
           toolName: errorCircuitToolName,
           consecutiveSameError,
-          mode: deps.mode,
+          policyId: deps.agentPolicy.id,
         });
-        if (shouldHardBlockTools(deps.mode)) {
+        if (shouldHardBlockTools(deps.agentPolicy)) {
           handlers.addMessage({
             role: 'user',
             content: buildErrorCircuitNotice(errorCircuitToolName),
@@ -406,9 +385,9 @@ export async function runDecisionLoop(
         logger.warn('Circuit breaker triggered', {
           toolName: roundToolName,
           consecutiveSameTool,
-          mode: deps.mode,
+          policyId: deps.agentPolicy.id,
         });
-        if (shouldHardBlockTools(deps.mode)) {
+        if (shouldHardBlockTools(deps.agentPolicy)) {
           const notice = buildCircuitBreakerNotice(roundToolName, consecutiveSameTool);
           handlers.addMessage({ role: 'user', content: notice });
           circuitBreakerNoticeSent = true;
@@ -423,7 +402,7 @@ export async function runDecisionLoop(
       }
     }
 
-    if (deps.mode === 'agent' && handlers.getTodoSnapshot) {
+    if (deps.agentPolicy.enforceOpenTodos && handlers.getTodoSnapshot) {
       const snapshot = await handlers.getTodoSnapshot();
       if (!snapshot.allTerminal && snapshot.open.length > 0) {
         const exhausted = buildTodoBudgetExhaustedMessage(snapshot);

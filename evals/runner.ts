@@ -1,4 +1,5 @@
 import fs from 'fs/promises';
+import { existsSync, readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { AgentBuilder } from '../application/agent/agent-builder.js';
@@ -7,9 +8,10 @@ import { inferProfileForModel } from '../application/services/resolve-model-prof
 import {
   resolveApiKeyForProfile,
   type ModelProfile,
+  type ProviderApiKeys,
 } from '../domain/model-profile.js';
+import type { AgentPolicy } from '../domain/agent-policy.js';
 import { createLLMProvider } from '../infrastructure/llm/create-provider.js';
-import { loadAllEnv } from '../infrastructure/persistence/poyraz-home.js';
 import { gradeEfficiency } from './graders/efficiency-grader.js';
 import { runOutcomeCheck } from './graders/outcome-grader.js';
 import { buildTraceMetrics, gradeTrace } from './graders/trace-grader.js';
@@ -40,17 +42,99 @@ const PROVIDER_ENV_KEYS: Record<ModelProfile['provider'], string> = {
 
 const MODEL_LIKE = /^[a-z0-9][a-z0-9._-]*$/i;
 
+const DENIED_READ_ONLY =
+  'This tool is disabled under the active policy. Writes and commands are blocked.';
+
+function parseEnvLine(line: string): { key: string; value: string } | null {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith('#')) return null;
+  const eq = trimmed.indexOf('=');
+  if (eq <= 0) return null;
+  const key = trimmed.slice(0, eq).trim();
+  let value = trimmed.slice(eq + 1).trim();
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1);
+  }
+  return { key, value };
+}
+
+function loadEnvFile(filePath: string): void {
+  if (!existsSync(filePath)) return;
+  for (const line of readFileSync(filePath, 'utf-8').split(/\r?\n/)) {
+    const parsed = parseEnvLine(line);
+    if (!parsed) continue;
+    if (process.env[parsed.key] === undefined) {
+      process.env[parsed.key] = parsed.value;
+    }
+  }
+}
+
 function loadEvalEnv(): void {
-  loadAllEnv(REPO_ROOT);
+  loadEnvFile(path.join(REPO_ROOT, '.env'));
+  const home = process.env.USERPROFILE || process.env.HOME;
+  if (home) loadEnvFile(path.join(home, '.poyraz', '.env'));
+}
+
+function providerKeysFromProcess(): ProviderApiKeys {
+  return {
+    openai: process.env.OPENAI_API_KEY,
+    groq: process.env.GROQ_API_KEY,
+    gemini: process.env.GEMINI_API_KEY,
+    openrouter: process.env.OPENROUTER_API_KEY,
+  };
+}
+
+function policyForEvalMode(mode: NonNullable<EvalScenario['mode']>): AgentPolicy {
+  if (mode === 'plan') {
+    return {
+      id: 'plan',
+      allowedTools: ['read_file', 'list_dir', 'glob_file_search', 'grep', 'todo_write'],
+      hardBlockDeniedTools: true,
+      deniedToolReason: DENIED_READ_ONLY,
+      perTurnToolLimits: { todo_write: 1 },
+      enforceOpenTodos: false,
+      directive: 'Active mode: PLAN. Read-only exploration; do not implement.',
+    };
+  }
+  if (mode === 'ask') {
+    return {
+      id: 'ask',
+      allowedTools: ['read_file', 'list_dir', 'glob_file_search', 'grep'],
+      hardBlockDeniedTools: true,
+      deniedToolReason: DENIED_READ_ONLY,
+      enforceOpenTodos: false,
+      directive: 'Active mode: ASK. Read-only answers only.',
+    };
+  }
+  if (mode === 'chat') {
+    return {
+      id: 'chat',
+      allowedTools: [],
+      hardBlockDeniedTools: true,
+      deniedToolReason: DENIED_READ_ONLY,
+      enforceOpenTodos: false,
+      directive: 'Active mode: CHAT. No tools.',
+    };
+  }
+  return {
+    id: 'agent',
+    allowedTools: 'all',
+    enforceOpenTodos: true,
+    directive: 'Active mode: AGENT. Use tools to complete the task.',
+  };
 }
 
 function resolveEvalProfile(model: string): ModelProfile {
-  const profile = inferProfileForModel(model);
+  const keys = providerKeysFromProcess();
+  const profile = inferProfileForModel(model, keys, process.env.OLLAMA_HOST);
   if (profile.provider === 'ollama') {
     return profile;
   }
 
-  const apiKey = resolveApiKeyForProfile(profile);
+  const apiKey = resolveApiKeyForProfile(profile, keys);
   if (!apiKey.trim()) {
     const envKey = PROVIDER_ENV_KEYS[profile.provider];
     throw new Error(
@@ -153,7 +237,7 @@ async function runScenario(scenario: EvalScenario, model: string): Promise<Scena
     await scenario.setup(fixture.workspace);
 
     const profile = resolveEvalProfile(model);
-    const apiKey = resolveApiKeyForProfile(profile);
+    const apiKey = resolveApiKeyForProfile(profile, providerKeysFromProcess());
     const provider = createLLMProvider(profile, apiKey);
 
     const agent = new AgentBuilder()
@@ -166,7 +250,7 @@ async function runScenario(scenario: EvalScenario, model: string): Promise<Scena
       .Build();
 
     if (scenario.mode) {
-      agent.setMode(scenario.mode);
+      agent.setPolicy(policyForEvalMode(scenario.mode));
     }
 
     const result = await agent.chat(scenario.prompt, {

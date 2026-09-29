@@ -1,10 +1,18 @@
 import type { LLMProvider } from '../../domain/llm.js';
+import type { AgentPolicy } from '../../domain/agent-policy.js';
+import type { ModelProfile } from '../../domain/model-profile.js';
+import type { TodoStore } from '../../domain/todo-store.js';
 import type { ToolPresetName } from '../../tools/core/registry.js';
 import type { LogLevel } from '../../shared/logger.js';
 import type { ToolDefinition } from '../../tools/core/types.js';
 import type { ToolRoutingPolicy } from '../chat/tool-policy.js';
 
 export type { ToolRoutingPolicy };
+
+export interface AgentDelegationConfig {
+  modelProfile: ModelProfile;
+  apiKey: string;
+}
 
 export interface AgentConfig {
   model?: string;
@@ -26,6 +34,12 @@ export interface AgentConfig {
   remoteContextUrl?: string;
   promptCacheRetention?: 'in_memory' | '24h';
   routingPolicy?: Partial<ToolRoutingPolicy>;
+  /** Injected todo persistence; defaults to in-memory when omitted. */
+  todoStore?: TodoStore;
+  /** Active behavioral policy (tool allow-list, gates, directives). */
+  policy?: AgentPolicy;
+  /** When set, enables delegate_task with this child profile/key. */
+  delegation?: AgentDelegationConfig;
 }
 
 export interface AgentTemplate {

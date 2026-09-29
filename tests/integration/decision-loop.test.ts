@@ -5,11 +5,22 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runDecisionLoop, CONSECUTIVE_SAME_ERROR_LIMIT } from '../../application/chat/decision-loop.js';
 import { createToolPolicyGuard } from '../../application/chat/tool-policy.js';
 import { createMessageContext } from '../../application/context/message-context.js';
+import {
+  DEFAULT_AGENT_POLICY,
+  type AgentPolicy,
+} from '../../domain/agent-policy.js';
 import { editFileSchema, editFile } from '../../tools/definitions/fs.js';
 import { defineTool } from '../../tools/core/define-tool.js';
 import type { ToolContext, ToolDefinition } from '../../tools/core/types.js';
 import { toolRegistry } from '../../tools/core/registry.js';
 import { containsRepairFor, mockLLM, toolCall } from './mock-llm.js';
+
+/** Plan-like: hard-block further tools after the error circuit breaker trips. */
+const HARD_BLOCK_POLICY: AgentPolicy = {
+  ...DEFAULT_AGENT_POLICY,
+  id: 'plan',
+  hardBlockDeniedTools: true,
+};
 
 describe('decision-loop tool error recovery', () => {
   let tmpDir: string;
@@ -52,7 +63,7 @@ describe('decision-loop tool error recovery', () => {
   function runLoop(
     provider: ReturnType<typeof mockLLM>,
     steps: Parameters<typeof mockLLM>[0],
-    mode: 'agent' | 'plan' | 'ask' | 'chat' = 'agent'
+    agentPolicy: AgentPolicy = DEFAULT_AGENT_POLICY
   ) {
     const llm = provider ?? mockLLM(steps);
     const messageContext = createMessageContext({ limit: 50, autoSummary: false, totalCapacity: 128000 });
@@ -62,7 +73,6 @@ describe('decision-loop tool error recovery', () => {
       maxToolRounds: 10,
       repeatCallLimit: 5,
       deterministicMode: true,
-      mode,
     });
 
     return runDecisionLoop(
@@ -72,7 +82,7 @@ describe('decision-loop tool error recovery', () => {
         options: {},
         tools: toolRegistry.toOpenAISchemas(Object.keys(toolDefs)),
         policy: { maxToolRounds: 10 },
-        mode,
+        agentPolicy,
       },
       toolDefs,
       policyGuard,
@@ -111,7 +121,7 @@ describe('decision-loop tool error recovery', () => {
       { content: 'Giving up in text.' },
     ]);
 
-    const { messages } = await runLoop(llm, [], 'plan');
+    const { messages } = await runLoop(llm, [], HARD_BLOCK_POLICY);
 
     const notices = messages.filter((m) => m.role === 'user' && m.content.includes('NOTICE:'));
     expect(notices.length).toBeGreaterThanOrEqual(1);
@@ -160,7 +170,7 @@ describe('decision-loop tool error recovery', () => {
       },
     ]);
 
-    const { messages } = await runLoop(llm, [], 'plan');
+    const { messages } = await runLoop(llm, [], HARD_BLOCK_POLICY);
 
     const assistants = messages.filter((m) => m.role === 'assistant');
     expect(assistants.length).toBeGreaterThanOrEqual(3);

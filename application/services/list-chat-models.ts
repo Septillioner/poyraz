@@ -106,16 +106,6 @@ async function listGeminiChatModels(apiKey: string): Promise<ListedChatModelRow[
   return rows.sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export function listChatModelsEnvFromProcess(): ListChatModelsEnv {
-  return {
-    ollamaHost: process.env.OLLAMA_HOST,
-    openAiApiKey: process.env.OPENAI_API_KEY,
-    groqApiKey: process.env.GROQ_API_KEY,
-    geminiApiKey: process.env.GEMINI_API_KEY,
-    openRouterApiKey: process.env.OPENROUTER_API_KEY,
-  };
-}
-
 export async function listAggregatedChatModels(
   env: ListChatModelsEnv
 ): Promise<ListedChatModelRow[]> {

@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  isAgentMode,
-  nextAgentMode,
-  resolveAgentMode,
-  resolveModeDenied,
-  resolveModeTools,
-} from '../../domain/agent-mode.js';
+  resolvePolicyDenied,
+  resolvePolicyTools,
+  type AgentPolicy,
+} from '../../domain/agent-policy.js';
 import {
   buildActiveToolsSection,
   buildToolGuidanceSection,
@@ -23,27 +21,29 @@ const ALL_TOOLS = [
   'delete_file',
 ];
 
-describe('agent-mode helpers', () => {
-  it('isAgentMode recognizes valid modes', () => {
-    expect(isAgentMode('agent')).toBe(true);
-    expect(isAgentMode('PLAN')).toBe(true);
-    expect(isAgentMode('invalid')).toBe(false);
-  });
+const PLAN_LIKE: AgentPolicy = {
+  id: 'plan',
+  allowedTools: ['read_file', 'list_dir', 'glob_file_search', 'grep', 'todo_write'],
+};
 
-  it('nextAgentMode cycles through modes', () => {
-    expect(nextAgentMode('agent')).toBe('plan');
-    expect(nextAgentMode('chat')).toBe('agent');
-  });
+const ASK_LIKE: AgentPolicy = {
+  id: 'ask',
+  allowedTools: ['read_file', 'list_dir', 'glob_file_search', 'grep'],
+};
 
-  it('resolveAgentMode returns undefined for unknown', () => {
-    expect(resolveAgentMode('nope')).toBeUndefined();
-    expect(resolveAgentMode('ask')).toBe('ask');
-  });
-});
+const AGENT_LIKE: AgentPolicy = {
+  id: 'agent',
+  allowedTools: 'all',
+};
 
-describe('resolveModeTools / resolveModeDenied', () => {
-  it('plan mode denies edit and shell tools', () => {
-    const denied = resolveModeDenied(ALL_TOOLS, 'plan');
+const CHAT_LIKE: AgentPolicy = {
+  id: 'chat',
+  allowedTools: [],
+};
+
+describe('resolvePolicyTools / resolvePolicyDenied', () => {
+  it('plan-like policy denies edit and shell tools', () => {
+    const denied = resolvePolicyDenied(ALL_TOOLS, PLAN_LIKE);
     expect(denied).toContain('edit_file');
     expect(denied).toContain('run_terminal_cmd');
     expect(denied).toContain('delete_file');
@@ -51,22 +51,22 @@ describe('resolveModeTools / resolveModeDenied', () => {
     expect(denied).not.toContain('todo_write');
   });
 
-  it('ask mode allows only read tools', () => {
-    const allowed = resolveModeTools(ALL_TOOLS, 'ask');
+  it('ask-like policy allows only read tools', () => {
+    const allowed = resolvePolicyTools(ALL_TOOLS, ASK_LIKE);
     expect(allowed).toEqual(['read_file', 'list_dir', 'glob_file_search', 'grep']);
-    const denied = resolveModeDenied(ALL_TOOLS, 'ask');
+    const denied = resolvePolicyDenied(ALL_TOOLS, ASK_LIKE);
     expect(denied).toContain('edit_file');
     expect(denied).toContain('todo_write');
   });
 
-  it('agent mode allows all tools', () => {
-    expect(resolveModeTools(ALL_TOOLS, 'agent')).toEqual(ALL_TOOLS);
-    expect(resolveModeDenied(ALL_TOOLS, 'agent')).toEqual([]);
+  it('all-tools policy allows every tool', () => {
+    expect(resolvePolicyTools(ALL_TOOLS, AGENT_LIKE)).toEqual(ALL_TOOLS);
+    expect(resolvePolicyDenied(ALL_TOOLS, AGENT_LIKE)).toEqual([]);
   });
 
-  it('chat mode denies all tools', () => {
-    expect(resolveModeTools(ALL_TOOLS, 'chat')).toEqual([]);
-    expect(resolveModeDenied(ALL_TOOLS, 'chat')).toEqual(ALL_TOOLS);
+  it('empty allow-list denies all tools', () => {
+    expect(resolvePolicyTools(ALL_TOOLS, CHAT_LIKE)).toEqual([]);
+    expect(resolvePolicyDenied(ALL_TOOLS, CHAT_LIKE)).toEqual(ALL_TOOLS);
   });
 });
 

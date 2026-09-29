@@ -1,5 +1,7 @@
 import { Agent } from './agent.js';
-import type { AgentConfig, AgentTemplate } from './config.js';
+import type { AgentConfig, AgentDelegationConfig, AgentTemplate } from './config.js';
+import type { AgentPolicy } from '../../domain/agent-policy.js';
+import type { TodoStore } from '../../domain/todo-store.js';
 import type { ModelProfile } from '../../domain/model-profile.js';
 import { ToolDefinition } from '../../tools/index.js';
 import { toolRegistry, ToolPresetName, TOOL_PRESETS } from '../../tools/core/registry.js';
@@ -188,6 +190,21 @@ export class AgentBuilder {
 
   ApiKey(key: string): this {
     this.config.apiKey = key;
+    return this;
+  }
+
+  TodoStore(store: TodoStore): this {
+    this.config.todoStore = store;
+    return this;
+  }
+
+  Policy(policy: AgentPolicy): this {
+    this.config.policy = policy;
+    return this;
+  }
+
+  Delegation(delegation: AgentDelegationConfig | null): this {
+    this.config.delegation = delegation ?? undefined;
     return this;
   }
 

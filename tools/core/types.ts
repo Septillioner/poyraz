@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { logger } from '../../shared/logger.js';
 import type { AgentError, TokenUsage } from '../../domain/llm.js';
 import type { ModelProfile } from '../../domain/model-profile.js';
+import type { TodoStore } from '../../domain/todo-store.js';
 
 export interface LastReadFileState {
   path: string;
@@ -34,6 +35,7 @@ export interface ToolContext {
   lastReadFile?: LastReadFileState;
   /** Starts one background subagent and returns immediately. */
   delegateTask?: (task: string) => Promise<DelegateTaskStartResult>;
+  todoStore?: TodoStore;
 }
 
 export type ToolCategory =
