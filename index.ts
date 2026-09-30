@@ -65,6 +65,7 @@ export type {
   LLMProvider,
   ReasoningConfig,
   ReasoningEffort,
+  ServiceTier,
   TokenUsage,
   ToolCall,
   AgentError,

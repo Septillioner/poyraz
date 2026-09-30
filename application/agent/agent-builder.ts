@@ -7,7 +7,7 @@ import type { ModelProfile } from '../../domain/model-profile.js';
 import { ToolDefinition } from '../../tools/index.js';
 import { toolRegistry, ToolPresetName } from '../../tools/core/registry.js';
 import { LogLevel } from '../../shared/logger.js';
-import { isReasoningEffort, type LLMProvider, type ReasoningConfig } from '../../domain/llm.js';
+import { isReasoningEffort, isServiceTier, type LLMProvider, type ReasoningConfig, type ServiceTier } from '../../domain/llm.js';
 import type { ToolRoutingPolicy } from '../chat/tool-policy.js';
 
 function defaultToolsFromPermissions(permissions: {
@@ -149,6 +149,14 @@ export class AgentBuilder {
       throw new Error(`Unknown reasoning effort: ${String(config.effort)}`);
     }
     this.config.reasoning = config.effort ? { effort: config.effort } : undefined;
+    return this;
+  }
+
+  ServiceTier(tier?: ServiceTier): this {
+    if (tier !== undefined && !isServiceTier(tier)) {
+      throw new Error(`Unknown service tier: ${String(tier)}`);
+    }
+    this.config.serviceTier = tier;
     return this;
   }
 

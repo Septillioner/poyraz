@@ -414,7 +414,7 @@ export class Agent {
 
   /** Compact older turns into a single rolling user summary message. */
   async summarize(handlers?: ChatHandlers): Promise<void> {
-    await summarizeHistory(this.context, this.provider, this.model, handlers);
+    await summarizeHistory(this.context, this.provider, this.model, handlers, this.config.serviceTier);
   }
 
   async chat(userInput: string, handlers?: ChatHandlers): Promise<{ content: string; usage: TokenUsage }> {
@@ -447,6 +447,7 @@ export class Agent {
           promptCacheKey: this.getPromptCacheKey(),
           promptCacheRetention: this.config.promptCacheRetention,
           reasoning: this.config.reasoning,
+          serviceTier: this.config.serviceTier,
           agentPolicy: this.policy,
         },
         this.tools,

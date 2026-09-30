@@ -12,6 +12,14 @@ export function isReasoningEffort(value: unknown): value is ReasoningEffort {
   return typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value);
 }
 
+export const SERVICE_TIERS = ['default', 'flex', 'fast', 'priority', 'ultrafast'] as const;
+
+export type ServiceTier = (typeof SERVICE_TIERS)[number];
+
+export function isServiceTier(value: unknown): value is ServiceTier {
+  return typeof value === 'string' && (SERVICE_TIERS as readonly string[]).includes(value);
+}
+
 export interface ChatMessageProviderMeta {
   gemini?: {
     modelContent: Content;
@@ -54,6 +62,7 @@ export interface ChatOptions {
   promptCacheKey?: string;
   promptCacheRetention?: 'in_memory' | '24h';
   reasoning?: ReasoningConfig;
+  serviceTier?: ServiceTier;
   signal?: AbortSignal;
 }
 

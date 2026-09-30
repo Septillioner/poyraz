@@ -1,6 +1,6 @@
 import type { ChatHandlers } from '../../domain/events.js';
 import { emitEvent } from '../../domain/events.js';
-import type { ChatMessage, LLMProvider } from '../../domain/llm.js';
+import type { ChatMessage, LLMProvider, ServiceTier } from '../../domain/llm.js';
 import { logger } from '../../shared/logger.js';
 import type { MessageContext } from './message-context.js';
 
@@ -66,7 +66,8 @@ export async function summarizeHistory(
   context: MessageContext,
   provider: LLMProvider,
   model: string,
-  handlers?: ChatHandlers
+  handlers?: ChatHandlers,
+  serviceTier?: ServiceTier,
 ): Promise<void> {
   const { toSummarize, keepIndex } = context.getMessagesToSummarize();
 
@@ -94,6 +95,7 @@ export async function summarizeHistory(
     const response = await provider.chat({
       model,
       messages: [{ role: 'user', content: summaryPrompt }],
+      serviceTier,
     });
 
     const summaryMessage: ChatMessage = {

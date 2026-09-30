@@ -121,6 +121,11 @@ export class OpenAIProvider implements LLMProvider {
     return this.chatViaCompletions(options, onToken);
   }
 
+  private applyServiceTier(requestBody: Record<string, unknown>, serviceTier?: ChatOptions['serviceTier']): void {
+    if (!serviceTier || !isOpenAiHost(this.baseUrl)) return;
+    requestBody.service_tier = serviceTier;
+  }
+
   private responsesRouteKey(model: string): string {
     return `${this.baseUrl}\n${model}`;
   }
@@ -166,6 +171,7 @@ export class OpenAIProvider implements LLMProvider {
     if (options.promptCacheRetention) {
       requestBody.prompt_cache_retention = options.promptCacheRetention;
     }
+    this.applyServiceTier(requestBody, options.serviceTier);
 
     let stream: any;
     try {
@@ -267,6 +273,7 @@ export class OpenAIProvider implements LLMProvider {
       if (options.promptCacheRetention) {
         requestBody.prompt_cache_retention = options.promptCacheRetention;
       }
+      this.applyServiceTier(requestBody, options.serviceTier);
     }
 
     let stream: any;
