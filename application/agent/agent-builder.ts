@@ -1,5 +1,6 @@
 import { Agent } from './agent.js';
-import type { AgentConfig, AgentDelegationConfig, AgentTemplate } from './config.js';
+import type { AgentConfig, AgentDelegationConfig, AgentTemplate, Skill } from './config.js';
+import { normalizeSkills } from '../../tools/definitions/skills.js';
 import type { AgentPolicy } from '../../domain/agent-policy.js';
 import type { TodoStore } from '../../domain/todo-store.js';
 import type { ModelProfile } from '../../domain/model-profile.js';
@@ -114,6 +115,30 @@ export class AgentBuilder {
     return this;
   }
 
+  Rules(...texts: string[]): this {
+    const rules = texts.map((text) => text.trim()).filter((text) => text.length > 0);
+    this.config.rules = rules.length > 0 ? rules : undefined;
+    return this;
+  }
+
+  AddSkill(skill: Skill): this {
+    const [normalized] = normalizeSkills([skill]);
+    if (!normalized) {
+      throw new Error('Skill requires name, description, and content');
+    }
+    const skills = [...(this.config.skills ?? [])];
+    const index = skills.findIndex((item) => item.name === normalized.name);
+    if (index >= 0) skills[index] = normalized;
+    else skills.push(normalized);
+    this.config.skills = skills;
+    return this;
+  }
+
+  AddSkills(skills: Skill[]): this {
+    for (const skill of skills) this.AddSkill(skill);
+    return this;
+  }
+
   AutoSummary(enabled: boolean = true): this {
     this.config.autoSummary = enabled;
     return this;
@@ -180,6 +205,8 @@ export class AgentBuilder {
     if (json.autoSummary !== undefined) this.AutoSummary(json.autoSummary);
     if (json.remoteContextUrl) this.RemoteContext(json.remoteContextUrl);
     if (json.systemPrompt) this.SystemPrompt(json.systemPrompt);
+    if (json.rules?.length) this.Rules(...json.rules);
+    if (json.skills?.length) this.AddSkills(json.skills);
     if (json.promptCacheRetention) this.config.promptCacheRetention = json.promptCacheRetention;
     if (json.options) this.Options(json.options);
     if (json.routingPolicy) this.RoutingPolicy(json.routingPolicy);

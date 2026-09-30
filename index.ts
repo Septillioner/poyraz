@@ -1,6 +1,6 @@
 export { Agent, type AgentConfig } from './application/agent/agent.js';
 export { AgentBuilder } from './application/agent/agent-builder.js';
-export type { AgentTemplate, AgentDelegationConfig } from './application/agent/config.js';
+export type { AgentTemplate, AgentDelegationConfig, Skill } from './application/agent/config.js';
 export type { ToolRoutingPolicy } from './application/chat/tool-policy.js';
 
 export { buildSystemPrompt, BASE_PROMPT } from './application/prompt/system-prompt.js';
@@ -16,7 +16,7 @@ export {
 } from './domain/agent-policy.js';
 
 export { createMessageContext } from './application/context/message-context.js';
-export type { MessageContext } from './application/context/message-context.js';
+export type { MessageContext, MemoryUsage } from './application/context/message-context.js';
 
 export {
   SUMMARY_MESSAGE_PREFIX,
@@ -87,6 +87,7 @@ export type {
 export { fetchModelInfo, fetchModelInfoForId } from './application/services/model-info.js';
 export type { ModelInfo } from './application/services/model-info.js';
 
+export { LOAD_SKILL_TOOL_NAME } from './tools/definitions/skills.js';
 export {
   DELEGATE_TASK_TOOL_NAME,
   SUBAGENT_MAX_TOOL_ROUNDS,

@@ -3,7 +3,12 @@ import type { ChatMessage, LLMProvider, TokenUsage } from '../../domain/llm.js';
 import type { ModelProfile } from '../../domain/model-profile.js';
 import { createLLMProvider } from '../../infrastructure/llm/create-provider.js';
 import { inferProviderFromHost } from '../../domain/model-profile.js';
-import { toolRegistry } from '../../tools/core/registry.js';
+import { toolRegistry, toOpenAISchema } from '../../tools/core/registry.js';
+import {
+  createLoadSkillTool,
+  LOAD_SKILL_TOOL_NAME,
+  normalizeSkills,
+} from '../../tools/definitions/skills.js';
 // Side-effect: register built-in tools before resolveAgentTools reads the registry.
 import '../../tools/index.js';
 import { MCP_TOOL_PREFIX } from '../../infrastructure/mcp/mcp-tool-bridge.js';
@@ -53,7 +58,7 @@ export class Agent {
   private policyConfig: ToolRoutingPolicy;
   private policy: AgentPolicy;
   private todoStore: TodoStore;
-  private context = createMessageContext({ limit: 50 });
+  private context = createMessageContext({});
   private stats = createTokenStats();
   private sessionId?: string;
   private builtPrompt?: BuiltSystemPrompt;
@@ -84,7 +89,7 @@ export class Agent {
       perTurnToolLimits: this.policy.perTurnToolLimits,
     };
     this.context = createMessageContext({
-      limit: config.contextLimit || 50,
+      limit: config.contextLimit,
     });
 
     if (config.provider) {
@@ -102,6 +107,7 @@ export class Agent {
     this.baseTools = resolveAgentTools(config);
     this.tools = {};
     this.syncDelegationTool();
+    this.syncSkillTool();
     this.applyPolicy();
 
     if (config.logLevel !== undefined) {
@@ -136,6 +142,22 @@ export class Agent {
       this.baseTools[DELEGATE_TASK_TOOL_NAME] = def;
     }
 
+    this.applyPolicy();
+  }
+
+  private syncSkillTool(): void {
+    const skills = normalizeSkills(this.config.skills);
+    this.config.skills = skills.length > 0 ? skills : undefined;
+    const excluded = this.config.excludeTools?.includes(LOAD_SKILL_TOOL_NAME) ?? false;
+
+    if (skills.length === 0 || excluded) {
+      if (!this.baseTools[LOAD_SKILL_TOOL_NAME]) return;
+      delete this.baseTools[LOAD_SKILL_TOOL_NAME];
+      this.applyPolicy();
+      return;
+    }
+
+    this.baseTools[LOAD_SKILL_TOOL_NAME] = createLoadSkillTool(skills);
     this.applyPolicy();
   }
 
@@ -202,7 +224,7 @@ export class Agent {
       if (tool) nextTools[name] = tool;
     }
     this.tools = nextTools;
-    this.cachedToolSchemas = toolRegistry.toOpenAISchemas(Object.keys(this.tools));
+    this.cachedToolSchemas = Object.values(this.tools).map((tool) => toOpenAISchema(tool));
     this.policyConfig.deniedTools = resolvePolicyDenied(Object.keys(this.baseTools), this.policy);
     this.policyConfig.deniedToolReason = this.policy.deniedToolReason;
     this.policyConfig.perTurnToolLimits = this.policy.perTurnToolLimits;
@@ -249,7 +271,7 @@ export class Agent {
   }
 
   rebuildSystemPrompt(): BuiltSystemPrompt {
-    const built = buildSystemPrompt(this.config.systemPrompt);
+    const built = buildSystemPrompt(this.config.systemPrompt, this.config.rules);
     this.builtPrompt = built;
 
     const msgs = this.context.getMessagesCopy();

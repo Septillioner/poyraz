@@ -14,13 +14,20 @@ export interface AgentDelegationConfig {
   apiKey: string;
 }
 
+export interface Skill {
+  name: string;
+  description: string;
+  content: string;
+}
+
 export interface AgentConfig {
   model?: string;
   host?: string;
-  /** Full system message content. Empty/omitted → no system message. */
+  /** Full system message content. Empty/omitted → no system message. Non-empty rules are appended after it. */
   systemPrompt?: string;
   workflow?: string;
   rules?: string[];
+  skills?: Skill[];
   tools?: Record<string, ToolDefinition>;
   toolPresets?: ToolPresetName[];
   includeTools?: string[];
@@ -49,6 +56,7 @@ export interface AgentTemplate {
   systemPrompt?: string;
   workflow?: string;
   rules?: string[];
+  skills?: Skill[];
   toolPresets?: ToolPresetName[];
   includeTools?: string[];
   excludeTools?: string[];

@@ -65,6 +65,14 @@ Statuses: `pending`, `in_progress`, `completed`, `cancelled`, `blocked`. At most
 
 Ripgrep-backed search (`pattern`, optional `path`, `glob`, `output_mode`, …). Requires `rg` on `PATH`.
 
+### `load_skill`
+
+Not a preset. Present only when the agent has at least one skill (`AddSkill` / `AddSkills` or a template `skills` array).
+
+Parameter: `name`. The tool description lists each skill name and description. The result is that skill's `content`. Skill text is not copied into the system message.
+
+`WithoutTools('load_skill')` omits it. A policy `allowedTools` list must include `load_skill` or the tool stays hidden.
+
 ## Inspecting the registry
 
 ```ts

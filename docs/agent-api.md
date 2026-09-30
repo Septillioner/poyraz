@@ -45,9 +45,11 @@ If you pass neither presets nor explicit tools, the agent stays bare: no tools. 
 
 | Method | Effect |
 |--------|--------|
-| `SystemPrompt(text)` | Full system message (verbatim). Empty/omitted → no system message |
-| `ContextLimit(n)` | Message turn limit for trim / auto-summary |
-| `AutoSummary(enabled?)` | When limit exceeded, rolling summary instead of trim |
+| `SystemPrompt(text)` | Host system text. Empty/omitted and no rules → no system message |
+| `Rules(...texts)` | Appended after the system text, separated by a blank line. Empty → system text unchanged |
+| `AddSkill(skill)` / `AddSkills(skills)` | Register skills. Adds `load_skill`; skill bodies are not written into the system message |
+| `ContextLimit(n)` | Turn limit for trim / auto-summary. Omitted → history is not trimmed |
+| `AutoSummary(enabled?)` | When `ContextLimit` is exceeded, rolling summary instead of trim. No effect without a limit |
 | `RemoteContext(url)` | Remote context URL |
 | `Options(record)` | Provider options (`temperature`, `num_ctx`, …) |
 | `RoutingPolicy(partial)` | `maxToolRounds`, `repeatCallLimit`, `deterministicMode`, … |
@@ -125,7 +127,7 @@ Throws `ChatAbortedError` when the abort signal fires.
 |--------|-------------|
 | `loadHistory(messages)` | Restore chat messages (keeps current system message if present) |
 | `getHistory()` / `getMessageHistory()` | Current messages |
-| `getMemoryUsage()` | Non-system message count vs `ContextLimit` |
+| `getMemoryUsage()` | Non-system message count. `limit` and `percentage` are `null` when `ContextLimit` is omitted |
 | `getStats()` | Provider token stats (`current` / `session`) |
 | `setSessionUsage(usage)` | Seed session token totals |
 | `summarize()` | Manually run the same rolling summary as `AutoSummary` |
@@ -133,7 +135,13 @@ Throws `ChatAbortedError` when the abort signal fires.
 | `setChatLogSource(source)` | Tag for debug logging |
 | `getPromptCacheKey()` | Prompt cache key when applicable |
 
-When `AutoSummary` is on and the turn count exceeds `ContextLimit`, older turns collapse into one `user` message (`Önceki konuşmaların özeti: …`) placed after the system message. `summarize()` does the same without waiting for the limit. Otherwise the history is trimmed.
+When `ContextLimit` is omitted, history only grows. `AutoSummary` does not run, and trim does not run.
+
+When `AutoSummary` is on and the turn count exceeds `ContextLimit`, older turns collapse into one `user` message (`Önceki konuşmaların özeti: …`) placed after the system message. The newest turns kept are about 60% of the limit. Without `AutoSummary`, the same cut is a hard trim.
+
+`summarize()` uses that same cut when a limit is set. With no limit it keeps the last `user` message and everything after it, and summarizes what comes before. If that slice is empty, no model call is made.
+
+`Rules` are host text only. They are joined onto the system message when non-empty. `AddSkill` registers `{ name, description, content }`. The tool schema lists name and description. Calling `load_skill` returns `content` as a tool result. Set skills at build time; changing the catalog changes the tool schema. If `allowedTools` is a name list, include `load_skill`. `WithoutTools('load_skill')` omits the tool.
 
 ## Routing policy
 

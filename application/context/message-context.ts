@@ -1,8 +1,16 @@
 import type { ChatMessage } from '../../domain/llm.js';
 import { logger } from '../../shared/logger.js';
 
+const KEPT_TURN_RATIO = 0.6;
+
 export interface ContextOptions {
-  limit: number;
+  limit?: number;
+}
+
+export interface MemoryUsage {
+  current: number;
+  limit: number | null;
+  percentage: number | null;
 }
 
 export interface MessageContext {
@@ -11,10 +19,14 @@ export interface MessageContext {
   getMessagesCopy(): ChatMessage[];
   setMessages(messages: ChatMessage[]): void;
   clear(): void;
-  getMemoryUsage(): { current: number; limit: number; percentage: number };
+  getMemoryUsage(): MemoryUsage;
   shouldManage(): boolean;
   trim(): void;
   getMessagesToSummarize(): { toSummarize: ChatMessage[]; keepIndex: number };
+}
+
+function hasTurnLimit(limit: number | undefined): limit is number {
+  return typeof limit === 'number' && Number.isFinite(limit) && limit > 0;
 }
 
 function hasPinnedSystem(messages: ChatMessage[]): boolean {
@@ -51,6 +63,13 @@ export function createMessageContext(options: ContextOptions): MessageContext {
     return cutIndex;
   };
 
+  const findLastUserIndex = (startIndex: number): number => {
+    for (let i = messages.length - 1; i >= startIndex; i--) {
+      if (messages[i].role === 'user') return i;
+    }
+    return startIndex;
+  };
+
   return {
     addMessage(message: ChatMessage) {
       messages.push(message);
@@ -69,22 +88,27 @@ export function createMessageContext(options: ContextOptions): MessageContext {
     },
     getMemoryUsage() {
       const current = messages.filter((m) => m.role !== 'system').length;
-      const limit = options.limit;
+      if (!hasTurnLimit(options.limit)) {
+        return { current, limit: null, percentage: null };
+      }
       return {
         current,
-        limit,
-        percentage: Math.min(100, Math.round((current / limit) * 100)),
+        limit: options.limit,
+        percentage: Math.min(100, Math.round((current / options.limit) * 100)),
       };
     },
     shouldManage() {
+      if (!hasTurnLimit(options.limit)) return false;
       return getConversationTurnCount() > options.limit;
     },
     trim() {
+      if (!hasTurnLimit(options.limit)) return;
+
       const turnCount = getConversationTurnCount();
       if (turnCount <= options.limit) return;
 
       logger.info(`Trimming history (${turnCount} turns exceeds limit ${options.limit})...`);
-      const keepTurns = Math.ceil(options.limit * 0.6);
+      const keepTurns = Math.ceil(options.limit * KEPT_TURN_RATIO);
       const cutIndex = findCutIndex(keepTurns);
       const recentMessages = messages.slice(cutIndex);
 
@@ -95,9 +119,10 @@ export function createMessageContext(options: ContextOptions): MessageContext {
       }
     },
     getMessagesToSummarize() {
-      const keepTurns = Math.ceil(options.limit * 0.6);
-      const keepIndex = findCutIndex(keepTurns);
       const startIndex = hasPinnedSystem(messages) ? 1 : 0;
+      const keepIndex = hasTurnLimit(options.limit)
+        ? findCutIndex(Math.ceil(options.limit * KEPT_TURN_RATIO))
+        : findLastUserIndex(startIndex);
 
       return {
         toSummarize: messages.slice(startIndex, keepIndex),

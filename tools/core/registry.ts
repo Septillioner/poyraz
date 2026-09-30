@@ -13,6 +13,25 @@ export const TOOL_PRESETS = {
 
 export type ToolPresetName = keyof typeof TOOL_PRESETS;
 
+export function toOpenAISchema(tool: ToolDefinition) {
+  let schema: any;
+  if (tool.parametersJsonSchema) {
+    schema = tool.parametersJsonSchema;
+  } else {
+    schema = zodToJsonSchema(getToolSchema(tool) as any, { $refStrategy: 'none' }) as any;
+    if (schema.$schema) delete schema.$schema;
+    if (schema.definitions) delete schema.definitions;
+  }
+  return {
+    type: 'function' as const,
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: schema,
+    },
+  };
+}
+
 class ToolRegistryImpl {
   private definitions = new Map<string, ToolDefinition>();
 
@@ -87,24 +106,7 @@ class ToolRegistryImpl {
       ? toolNames.map((n) => this.get(n)).filter((d): d is ToolDefinition => !!d)
       : this.list();
 
-    return defs.map((tool) => {
-      let schema: any;
-      if (tool.parametersJsonSchema) {
-        schema = tool.parametersJsonSchema;
-      } else {
-        schema = zodToJsonSchema(getToolSchema(tool) as any, { $refStrategy: 'none' }) as any;
-        if (schema.$schema) delete schema.$schema;
-        if (schema.definitions) delete schema.definitions;
-      }
-      return {
-        type: 'function' as const,
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: schema,
-        },
-      };
-    });
+    return defs.map((tool) => toOpenAISchema(tool));
   }
 
   toCatalogEntries() {
