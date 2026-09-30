@@ -63,6 +63,8 @@ export type {
   ChatOptions,
   ChatResponse,
   LLMProvider,
+  ReasoningConfig,
+  ReasoningEffort,
   TokenUsage,
   ToolCall,
   AgentError,

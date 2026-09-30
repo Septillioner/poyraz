@@ -57,12 +57,13 @@ class McpClientManager {
   /** Disconnects all current connections and reconnects every server in `servers`. */
   async connectAll(servers: Record<string, McpServerDef>): Promise<Record<string, ToolDefinition>> {
     await this.disconnectAll();
+    const used = new Set<string>();
     const entries = Object.entries(servers);
-    await Promise.all(entries.map(([id, def]) => this.connect(id, def)));
+    await Promise.all(entries.map(([id, def]) => this.connect(id, def, used)));
     return this.getTools();
   }
 
-  async connect(id: string, def: McpServerDef): Promise<void> {
+  async connect(id: string, def: McpServerDef, used?: Set<string>): Promise<void> {
     if (def.disabled) {
       this.states.set(id, { id, status: 'disabled', toolCount: 0 });
       return;
@@ -74,9 +75,10 @@ class McpClientManager {
       await client.connect(transport);
 
       const { tools: mcpTools } = await client.listTools();
+      const names = used ?? this.namesExcept(id);
       const tools: Record<string, ToolDefinition> = {};
       for (const tool of mcpTools) {
-        const bridged = bridgeMcpTool(id, client, tool as any);
+        const bridged = bridgeMcpTool(id, client, tool as any, names);
         tools[bridged.name] = bridged;
       }
 
@@ -101,6 +103,15 @@ class McpClientManager {
   async disconnectAll(): Promise<void> {
     await Promise.all(Array.from(this.connections.keys()).map((id) => this.disconnect(id)));
     this.states.clear();
+  }
+
+  private namesExcept(id: string): Set<string> {
+    const used = new Set<string>();
+    for (const [otherId, connection] of this.connections) {
+      if (otherId === id) continue;
+      for (const name of Object.keys(connection.tools)) used.add(name);
+    }
+    return used;
   }
 
   getTools(): Record<string, ToolDefinition> {

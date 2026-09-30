@@ -446,6 +446,7 @@ export class Agent {
           policy: this.policyConfig,
           promptCacheKey: this.getPromptCacheKey(),
           promptCacheRetention: this.config.promptCacheRetention,
+          reasoning: this.config.reasoning,
           agentPolicy: this.policy,
         },
         this.tools,

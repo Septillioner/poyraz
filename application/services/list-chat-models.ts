@@ -21,6 +21,7 @@ export interface ListedChatModelRow {
   /** Set only for OpenRouter models. */
   tier?: OpenRouterTier;
   contextLength?: number;
+  supportsReasoningEffort?: boolean;
   description?: string;
   pricing?: { prompt: string; completion: string };
 }
@@ -36,6 +37,23 @@ interface OpenRouterModelApiRow {
   pricing?: OpenRouterModelPricing;
   context_length?: number;
   description?: string;
+  supported_parameters?: unknown;
+}
+
+const REASONING_EFFORT_PARAMETER = 'reasoning_effort';
+const OPENAI_LISTED_MODEL_PATTERN = /^(?:gpt-|o[1-9])|codex/i;
+
+function supportsReasoningEffort(parameters: unknown): boolean {
+  return Array.isArray(parameters) && parameters.includes(REASONING_EFFORT_PARAMETER);
+}
+
+function reasoningEffortFromRow(row: unknown): boolean {
+  if (!row || typeof row !== 'object') return false;
+  return supportsReasoningEffort((row as { supported_parameters?: unknown }).supported_parameters);
+}
+
+function isOpenAiListedModel(id: string): boolean {
+  return OPENAI_LISTED_MODEL_PATTERN.test(id);
 }
 
 export function classifyOpenRouterTier(
@@ -132,13 +150,14 @@ export async function listAggregatedChatModels(
       const openai = new OpenAI({ apiKey: env.openAiApiKey });
       const remoteModels = await openai.models.list();
       remoteModels.data
-        .filter((m) => m.id.startsWith('gpt-') || m.id.startsWith('o1-'))
+        .filter((m) => isOpenAiListedModel(m.id))
         .forEach((m) => {
           models.push({
             provider: 'openai',
             name: m.id,
             id: m.id,
             host: DEFAULT_OPENAI_HOST,
+            supportsReasoningEffort: true,
           });
         });
     }
@@ -154,13 +173,14 @@ export async function listAggregatedChatModels(
       if (!res.ok) {
         throw new Error(`Groq models HTTP ${res.status}`);
       }
-      const body = (await res.json()) as { data?: { id: string }[] };
+      const body = (await res.json()) as { data?: { id: string; supported_parameters?: unknown }[] };
       for (const m of body.data ?? []) {
         models.push({
           provider: 'groq',
           name: m.id,
           id: m.id,
           host: DEFAULT_GROQ_HOST,
+          ...(reasoningEffortFromRow(m) ? { supportsReasoningEffort: true } : {}),
         });
       }
     }
@@ -197,6 +217,7 @@ export async function listAggregatedChatModels(
           host: DEFAULT_OPENROUTER_HOST,
           tier: classifyOpenRouterTier(m.id, m.pricing),
           contextLength: m.context_length,
+          ...(reasoningEffortFromRow(m) ? { supportsReasoningEffort: true } : {}),
           description: m.description,
           pricing:
             m.pricing?.prompt !== undefined && m.pricing?.completion !== undefined

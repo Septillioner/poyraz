@@ -1,6 +1,7 @@
 import type {
   ChatMessage,
   ChatResponse,
+  ReasoningEffort,
   TokenUsage,
   ToolCall,
 } from '../../domain/llm.js';
@@ -8,8 +9,12 @@ import { logger } from '../../shared/logger.js';
 
 const OPENAI_HOST_MARKER = 'openai.com';
 const CODEX_MODEL_PATTERN = /codex/i;
-const RESPONSES_ENDPOINT_HINT = /v1\/responses/i;
+const HTTP_BAD_REQUEST = 400;
 const HTTP_NOT_FOUND = 404;
+const RESPONSES_REASONING_SUMMARY = 'auto';
+const EFFORT_PARAMETER_ERROR = /reasoning\.effort|\beffort\b/i;
+const MODEL_OR_ENDPOINT_UNSUPPORTED =
+  /(model|endpoint).{0,80}(not support|unsupported|not available|not found)|does not support the responses|responses api is not|unknown (url|endpoint)|no endpoints found|cannot post/i;
 
 export function isOpenAiHost(baseUrl: string): boolean {
   return baseUrl.includes(OPENAI_HOST_MARKER);
@@ -19,11 +24,27 @@ export function requiresOpenAIResponsesApi(model: string, baseUrl: string): bool
   return isOpenAiHost(baseUrl) && CODEX_MODEL_PATTERN.test(model);
 }
 
-export function isResponsesApiRequiredError(error: unknown): boolean {
-  const err = error as { status?: number; statusCode?: number; message?: string };
+export function isResponsesUnsupportedError(error: unknown): boolean {
+  const err = error as {
+    status?: number;
+    statusCode?: number;
+    message?: string;
+    error?: { message?: string };
+  };
   const status = err?.status ?? err?.statusCode;
-  const message = String(err?.message ?? '');
-  return status === HTTP_NOT_FOUND && RESPONSES_ENDPOINT_HINT.test(message);
+  if (status === HTTP_NOT_FOUND) return true;
+  if (status !== HTTP_BAD_REQUEST) return false;
+
+  const message = [err?.message, err?.error?.message].filter(Boolean).join(' ');
+  if (EFFORT_PARAMETER_ERROR.test(message)) return false;
+  return MODEL_OR_ENDPOINT_UNSUPPORTED.test(message);
+}
+
+export function buildResponsesReasoning(effort?: ReasoningEffort): {
+  summary: typeof RESPONSES_REASONING_SUMMARY;
+  effort?: ReasoningEffort;
+} {
+  return effort ? { summary: RESPONSES_REASONING_SUMMARY, effort } : { summary: RESPONSES_REASONING_SUMMARY };
 }
 
 export interface ResponsesToolDefinition {

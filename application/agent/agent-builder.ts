@@ -7,7 +7,7 @@ import type { ModelProfile } from '../../domain/model-profile.js';
 import { ToolDefinition } from '../../tools/index.js';
 import { toolRegistry, ToolPresetName } from '../../tools/core/registry.js';
 import { LogLevel } from '../../shared/logger.js';
-import type { LLMProvider } from '../../domain/llm.js';
+import { isReasoningEffort, type LLMProvider, type ReasoningConfig } from '../../domain/llm.js';
 import type { ToolRoutingPolicy } from '../chat/tool-policy.js';
 
 function defaultToolsFromPermissions(permissions: {
@@ -144,6 +144,14 @@ export class AgentBuilder {
     return this;
   }
 
+  Reasoning(config: ReasoningConfig): this {
+    if (config.effort !== undefined && !isReasoningEffort(config.effort)) {
+      throw new Error(`Unknown reasoning effort: ${String(config.effort)}`);
+    }
+    this.config.reasoning = config.effort ? { effort: config.effort } : undefined;
+    return this;
+  }
+
   RemoteContext(url: string): this {
     this.config.remoteContextUrl = url;
     return this;
@@ -203,6 +211,7 @@ export class AgentBuilder {
 
     if (json.contextLimit) this.ContextLimit(json.contextLimit);
     if (json.autoSummary !== undefined) this.AutoSummary(json.autoSummary);
+    if (json.reasoning) this.Reasoning(json.reasoning);
     if (json.remoteContextUrl) this.RemoteContext(json.remoteContextUrl);
     if (json.systemPrompt) this.SystemPrompt(json.systemPrompt);
     if (json.rules?.length) this.Rules(...json.rules);

@@ -11,8 +11,9 @@ import type {
 } from '../../domain/llm.js';
 import {
   buildChatResponseFromResponsesOutput,
+  buildResponsesReasoning,
   isOpenAiHost,
-  isResponsesApiRequiredError,
+  isResponsesUnsupportedError,
   mapResponsesUsage,
   requiresOpenAIResponsesApi,
   toResponsesInput,
@@ -76,6 +77,7 @@ export class OllamaProvider implements LLMProvider {
 export class OpenAIProvider implements LLMProvider {
   private client: OpenAI;
   private baseUrl: string;
+  private readonly responsesUnsupportedModels = new Set<string>();
 
   constructor(
     baseUrl: string,
@@ -95,26 +97,45 @@ export class OpenAIProvider implements LLMProvider {
     onToken?: (token: string) => void,
     onReasoning?: (delta: string) => void
   ): Promise<ChatResponse> {
-    if (requiresOpenAIResponsesApi(options.model, this.baseUrl)) {
-      return this.chatViaResponses(options, onToken, onReasoning);
-    }
-
-    try {
-      return await this.chatViaCompletions(options, onToken);
-    } catch (error: any) {
-      if (
-        isOpenAiHost(this.baseUrl) &&
-        isResponsesApiRequiredError(error) &&
-        !options.signal?.aborted
-      ) {
-        logger.warn('Chat Completions rejected; falling back to Responses API', {
+    if (this.shouldTryResponses(options.model)) {
+      try {
+        return await this.chatViaResponses(options, onToken, onReasoning);
+      } catch (error: any) {
+        if (!this.shouldFallBackToCompletions(options.model, error)) {
+          throw error;
+        }
+        this.responsesUnsupportedModels.add(this.responsesRouteKey(options.model));
+        logger.warn('Responses API unsupported; falling back to Chat Completions', {
           model: options.model,
           message: error?.message,
         });
-        return this.chatViaResponses(options, onToken, onReasoning);
+        if (options.reasoning?.effort) {
+          logger.warn('Reasoning effort applies only on the Responses API', {
+            model: options.model,
+            effort: options.reasoning.effort,
+          });
+        }
       }
-      throw error;
     }
+
+    return this.chatViaCompletions(options, onToken);
+  }
+
+  private responsesRouteKey(model: string): string {
+    return `${this.baseUrl}\n${model}`;
+  }
+
+  private shouldTryResponses(model: string): boolean {
+    if (requiresOpenAIResponsesApi(model, this.baseUrl)) return true;
+    return !this.responsesUnsupportedModels.has(this.responsesRouteKey(model));
+  }
+
+  private shouldFallBackToCompletions(model: string, error: unknown): boolean {
+    if (requiresOpenAIResponsesApi(model, this.baseUrl)) return false;
+    if (error instanceof ChatAbortedError) return false;
+    const named = error as { name?: string };
+    if (named?.name === 'AbortError') return false;
+    return isResponsesUnsupportedError(error);
   }
 
   private async chatViaResponses(
@@ -130,7 +151,7 @@ export class OpenAIProvider implements LLMProvider {
       input,
       stream: true,
       store: false,
-      reasoning: { summary: 'auto' },
+      reasoning: buildResponsesReasoning(options.reasoning?.effort),
     };
 
     if (instructions) {
@@ -201,7 +222,9 @@ export class OpenAIProvider implements LLMProvider {
         throw new ChatAbortedError();
       }
       logger.error('Responses stream processing error', { error: error.message });
-      throw error;
+      const streamError = new Error(error?.message || 'Responses stream failed');
+      streamError.name = 'ResponsesStreamProcessingError';
+      throw streamError;
     }
 
     const response = buildChatResponseFromResponsesOutput({ content, output, usage });

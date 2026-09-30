@@ -31,7 +31,7 @@ agent.mergeExternalTools(tools);
 
 ## Tool names
 
-Bridged tools are prefixed (`mcp_<serverId>_<toolName>`). Use `MCP_TOOL_PREFIX` / `mcpToolName` helpers when needed.
+Bridged tools are prefixed (`mcp_<serverId>__<toolName>`). Characters outside `a-z`, `A-Z`, `0-9`, `_`, and `-` become `_`. The name is at most 64 characters, and a collision on the same connection gets a numeric suffix. The MCP call still uses the original tool name. Use `MCP_TOOL_PREFIX` / `mcpToolName` helpers when needed.
 
 ## Status
 

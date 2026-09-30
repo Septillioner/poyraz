@@ -1,4 +1,4 @@
-import type { LLMProvider } from '../../domain/llm.js';
+import type { LLMProvider, ReasoningConfig } from '../../domain/llm.js';
 import type { AgentPolicy } from '../../domain/agent-policy.js';
 import type { ModelProfile } from '../../domain/model-profile.js';
 import type { TodoStore } from '../../domain/todo-store.js';
@@ -41,6 +41,7 @@ export interface AgentConfig {
   name?: string;
   remoteContextUrl?: string;
   promptCacheRetention?: 'in_memory' | '24h';
+  reasoning?: ReasoningConfig;
   routingPolicy?: Partial<ToolRoutingPolicy>;
   /** Injected todo persistence; defaults to in-memory when omitted. */
   todoStore?: TodoStore;
@@ -76,5 +77,6 @@ export interface AgentTemplate {
   logLevel?: LogLevel;
   remoteContextUrl?: string;
   promptCacheRetention?: 'in_memory' | '24h';
+  reasoning?: ReasoningConfig;
   routingPolicy?: Partial<ToolRoutingPolicy>;
 }

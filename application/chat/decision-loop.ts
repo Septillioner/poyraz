@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import type { ChatMessage, LLMProvider, TokenUsage } from '../../domain/llm.js';
+import type { ChatMessage, LLMProvider, ReasoningConfig, TokenUsage } from '../../domain/llm.js';
 import type { AgentStreamEvent } from '../../domain/events.js';
 import type { AgentPolicy } from '../../domain/agent-policy.js';
 import type { TodoSnapshot } from '../../domain/task.js';
@@ -51,6 +51,7 @@ export interface DecisionLoopDeps {
   policy: { maxToolRounds: number };
   promptCacheKey?: string;
   promptCacheRetention?: 'in_memory' | '24h';
+  reasoning?: ReasoningConfig;
   agentPolicy: AgentPolicy;
 }
 
@@ -177,6 +178,7 @@ export async function runDecisionLoop(
           tools: deps.tools,
           promptCacheKey: handlers.getPromptCacheKey?.() ?? deps.promptCacheKey,
           promptCacheRetention: deps.promptCacheRetention,
+          reasoning: deps.reasoning,
           signal: handlers.signal,
         },
         (token) => {

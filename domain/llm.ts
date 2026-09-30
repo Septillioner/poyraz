@@ -1,5 +1,17 @@
 import type { Content } from '@google/genai';
 
+export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
+export interface ReasoningConfig {
+  effort?: ReasoningEffort;
+}
+
+export function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  return typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value);
+}
+
 export interface ChatMessageProviderMeta {
   gemini?: {
     modelContent: Content;
@@ -41,6 +53,7 @@ export interface ChatOptions {
   options?: any;
   promptCacheKey?: string;
   promptCacheRetention?: 'in_memory' | '24h';
+  reasoning?: ReasoningConfig;
   signal?: AbortSignal;
 }
 
