@@ -1,4 +1,4 @@
-export type ModelProviderKind = 'ollama' | 'openai' | 'groq' | 'gemini' | 'openrouter';
+export type ModelProviderKind = 'ollama' | 'llamacpp' | 'openai' | 'groq' | 'gemini' | 'openrouter';
 
 export interface ModelProfile {
   model: string;
@@ -11,10 +11,15 @@ export interface ProviderApiKeys {
   groq?: string;
   gemini?: string;
   openrouter?: string;
+  llamacpp?: string;
 }
 
 export const DEFAULT_OPENAI_HOST = 'https://api.openai.com/v1/';
 export const DEFAULT_OLLAMA_HOST = 'http://127.0.0.1:11434';
+export const DEFAULT_LLAMACPP_HOST = 'http://127.0.0.1:8080';
+export const LLAMACPP_MAX_TOOLS = 10;
+export const LLAMACPP_ANONYMOUS_API_KEY = 'llamacpp';
+const LLAMACPP_API_SUFFIX = '/v1';
 export const DEFAULT_GROQ_HOST = 'https://api.groq.com/openai/v1';
 export const DEFAULT_GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 export const DEFAULT_GEMINI_HOST = `${DEFAULT_GEMINI_API_BASE}/openai`;
@@ -60,6 +65,9 @@ export function resolveApiKeyForProfile(
   if (profile.provider === 'openai' || profile.host.includes('openai.com')) {
     return keys.openai || '';
   }
+  if (profile.provider === 'llamacpp') {
+    return keys.llamacpp || '';
+  }
   return '';
 }
 
@@ -68,6 +76,7 @@ export function formatProviderLabel(provider: ModelProviderKind): string {
   if (provider === 'groq') return 'Groq';
   if (provider === 'gemini') return 'Gemini';
   if (provider === 'openrouter') return 'OpenRouter';
+  if (provider === 'llamacpp') return 'llama.cpp';
   return 'Ollama';
 }
 
@@ -92,6 +101,20 @@ export function ollamaProfile(model: string, host?: string): ModelProfile {
     model,
     provider: 'ollama',
     host: host || DEFAULT_OLLAMA_HOST,
+  };
+}
+
+export function llamaCppApiBase(host: string): string {
+  const trimmed = host.trim().replace(/\/+$/, '');
+  if (trimmed.endsWith(LLAMACPP_API_SUFFIX)) return trimmed;
+  return `${trimmed}${LLAMACPP_API_SUFFIX}`;
+}
+
+export function llamaCppProfile(model: string, host?: string): ModelProfile {
+  return {
+    model,
+    provider: 'llamacpp',
+    host: host || DEFAULT_LLAMACPP_HOST,
   };
 }
 

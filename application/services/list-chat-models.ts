@@ -5,6 +5,7 @@ import {
   DEFAULT_GEMINI_API_BASE,
   DEFAULT_GROQ_HOST,
   DEFAULT_OLLAMA_HOST,
+  llamaCppApiBase,
   DEFAULT_OPENAI_HOST,
   DEFAULT_OPENROUTER_HOST,
   openRouterDefaultHeaders,
@@ -67,10 +68,16 @@ export function classifyOpenRouterTier(
 
 export interface ListChatModelsEnv {
   ollamaHost?: string;
+  llamaCppHost?: string;
+  llamaCppApiKey?: string;
   openAiApiKey?: string;
   groqApiKey?: string;
   geminiApiKey?: string;
   openRouterApiKey?: string;
+}
+
+interface LlamaCppListedModel {
+  id?: string;
 }
 
 interface GeminiApiModel {
@@ -124,6 +131,30 @@ async function listGeminiChatModels(apiKey: string): Promise<ListedChatModelRow[
   return rows.sort((a, b) => a.id.localeCompare(b.id));
 }
 
+async function listLlamaCppChatModels(host: string, apiKey?: string): Promise<ListedChatModelRow[]> {
+  const base = llamaCppApiBase(host);
+  const headers: Record<string, string> = {};
+  const key = apiKey?.trim();
+  if (key) headers.Authorization = `Bearer ${key}`;
+  const res = await fetch(`${base}/models`, { headers });
+  if (!res.ok) {
+    throw new Error(`llama.cpp models HTTP ${res.status}`);
+  }
+  const body = (await res.json()) as { data?: LlamaCppListedModel[] };
+  const rows: ListedChatModelRow[] = [];
+  for (const model of body.data ?? []) {
+    const id = model.id?.trim();
+    if (!id) continue;
+    rows.push({
+      provider: 'llamacpp',
+      name: id,
+      id,
+      host,
+    });
+  }
+  return rows;
+}
+
 export async function listAggregatedChatModels(
   env: ListChatModelsEnv
 ): Promise<ListedChatModelRow[]> {
@@ -143,6 +174,16 @@ export async function listAggregatedChatModels(
     });
   } catch {
     logger.warn('Ollama not available for model listing');
+  }
+
+  try {
+    if (env.llamaCppHost) {
+      const localModels = await listLlamaCppChatModels(env.llamaCppHost, env.llamaCppApiKey);
+      models.push(...localModels);
+    }
+  } catch (error: unknown) {
+    logger.warn('llama.cpp not available for model listing');
+    if (env.llamaCppHost) throw error;
   }
 
   try {

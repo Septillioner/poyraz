@@ -74,17 +74,27 @@ export class OllamaProvider implements LLMProvider {
   }
 }
 
+export interface OpenAIProviderOptions {
+  completionsOnly?: boolean;
+  maxTools?: number;
+}
+
 export class OpenAIProvider implements LLMProvider {
   private client: OpenAI;
   private baseUrl: string;
+  private readonly completionsOnly: boolean;
+  private readonly maxTools: number | undefined;
   private readonly responsesUnsupportedModels = new Set<string>();
 
   constructor(
     baseUrl: string,
     apiKey: string,
-    defaultHeaders?: Record<string, string>
+    defaultHeaders?: Record<string, string>,
+    options?: OpenAIProviderOptions
   ) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.completionsOnly = options?.completionsOnly === true;
+    this.maxTools = options?.maxTools;
     this.client = new OpenAI({
       baseURL: this.baseUrl,
       apiKey: apiKey,
@@ -131,8 +141,18 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   private shouldTryResponses(model: string): boolean {
+    if (this.completionsOnly) return false;
     if (requiresOpenAIResponsesApi(model, this.baseUrl)) return true;
     return !this.responsesUnsupportedModels.has(this.responsesRouteKey(model));
+  }
+
+  private toolsForRequest(tools: ChatOptions['tools']): ChatOptions['tools'] {
+    if (!this.maxTools || !tools || tools.length <= this.maxTools) return tools;
+    logger.warn('Dropped tools beyond the request limit', {
+      limit: this.maxTools,
+      total: tools.length,
+    });
+    return tools.slice(0, this.maxTools);
   }
 
   private shouldFallBackToCompletions(model: string, error: unknown): boolean {
@@ -261,7 +281,7 @@ export class OpenAIProvider implements LLMProvider {
           },
         })),
       })),
-      tools: options.tools,
+      tools: this.toolsForRequest(options.tools),
       stream: true,
       stream_options: { include_usage: true },
     };

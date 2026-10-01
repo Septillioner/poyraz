@@ -38,6 +38,7 @@ const PROVIDER_ENV_KEYS: Record<ModelProfile['provider'], string> = {
   gemini: 'GEMINI_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
   ollama: 'OLLAMA_HOST',
+  llamacpp: 'LLAMACPP_HOST',
 };
 
 const MODEL_LIKE = /^[a-z0-9][a-z0-9._-]*$/i;
@@ -139,7 +140,7 @@ function systemPromptForEvalMode(mode: NonNullable<EvalScenario['mode']>): strin
 function resolveEvalProfile(model: string): ModelProfile {
   const keys = providerKeysFromProcess();
   const profile = inferProfileForModel(model, keys, process.env.OLLAMA_HOST);
-  if (profile.provider === 'ollama') {
+  if (profile.provider === 'ollama' || profile.provider === 'llamacpp') {
     return profile;
   }
 

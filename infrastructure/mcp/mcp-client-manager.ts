@@ -8,10 +8,16 @@ import { bridgeMcpTool } from './mcp-tool-bridge.js';
 
 export type McpConnectionStatus = 'connected' | 'error' | 'disabled';
 
+export interface McpListedTool {
+  name: string;
+  description: string;
+}
+
 export interface McpServerState {
   id: string;
   status: McpConnectionStatus;
   toolCount: number;
+  tools: McpListedTool[];
   error?: string;
 }
 
@@ -33,6 +39,17 @@ function createTransport(def: McpServerDef): Transport {
     env: def.env,
     cwd: def.cwd,
   });
+}
+
+function listedTools(tools: { name?: string; description?: string }[]): McpListedTool[] {
+  const listed: McpListedTool[] = [];
+  for (const tool of tools) {
+    const name = typeof tool.name === 'string' ? tool.name.trim() : '';
+    if (!name) continue;
+    const description = typeof tool.description === 'string' ? tool.description.trim() : '';
+    listed.push({ name, description });
+  }
+  return listed;
 }
 
 /**
@@ -65,7 +82,7 @@ class McpClientManager {
 
   async connect(id: string, def: McpServerDef, used?: Set<string>): Promise<void> {
     if (def.disabled) {
-      this.states.set(id, { id, status: 'disabled', toolCount: 0 });
+      this.states.set(id, { id, status: 'disabled', toolCount: 0, tools: [] });
       return;
     }
 
@@ -82,10 +99,11 @@ class McpClientManager {
         tools[bridged.name] = bridged;
       }
 
+      const listed = listedTools(mcpTools);
       this.connections.set(id, { client, transport, tools });
-      this.states.set(id, { id, status: 'connected', toolCount: mcpTools.length });
+      this.states.set(id, { id, status: 'connected', toolCount: listed.length, tools: listed });
     } catch (error: any) {
-      this.states.set(id, { id, status: 'error', toolCount: 0, error: describeConnectError(error) });
+      this.states.set(id, { id, status: 'error', toolCount: 0, tools: [], error: describeConnectError(error) });
     }
   }
 

@@ -41,6 +41,9 @@ export type {
 export {
   DEFAULT_OPENAI_HOST,
   DEFAULT_OLLAMA_HOST,
+  DEFAULT_LLAMACPP_HOST,
+  LLAMACPP_MAX_TOOLS,
+  LLAMACPP_ANONYMOUS_API_KEY,
   DEFAULT_GROQ_HOST,
   DEFAULT_GEMINI_API_BASE,
   DEFAULT_GEMINI_HOST,
@@ -53,6 +56,8 @@ export {
   geminiProfile,
   openAiProfile,
   ollamaProfile,
+  llamaCppProfile,
+  llamaCppApiBase,
   openRouterDefaultHeaders,
 } from './domain/model-profile.js';
 
