@@ -67,6 +67,7 @@ export function classifyOpenRouterTier(
 }
 
 export interface ListChatModelsEnv {
+  includeOllama?: boolean;
   ollamaHost?: string;
   llamaCppHost?: string;
   llamaCppApiKey?: string;
@@ -159,21 +160,34 @@ export async function listAggregatedChatModels(
   env: ListChatModelsEnv
 ): Promise<ListedChatModelRow[]> {
   const models: ListedChatModelRow[] = [];
-  const ollamaHost = env.ollamaHost || DEFAULT_OLLAMA_HOST;
+  if (env.includeOllama !== false) {
+    const ollamaHost = env.ollamaHost || DEFAULT_OLLAMA_HOST;
 
-  try {
-    const ollama = new Ollama({ host: ollamaHost });
-    const localModels = await ollama.list();
-    localModels.models.forEach((m) => {
-      models.push({
-        provider: 'ollama',
-        name: m.name,
-        id: m.name,
-        host: ollamaHost,
-      });
-    });
-  } catch {
-    logger.warn('Ollama not available for model listing');
+    try {
+      const ollama = new Ollama({ host: ollamaHost });
+      const localModels = await ollama.list();
+      const ollamaRows = await Promise.all(localModels.models.map(async (m): Promise<ListedChatModelRow> => {
+        const row: ListedChatModelRow = {
+          provider: 'ollama',
+          name: m.name,
+          id: m.name,
+          host: ollamaHost,
+        };
+        try {
+          const info = await ollama.show({ model: m.name });
+          const contextLength = info.model_info.get('llama.context_length');
+          if (typeof contextLength === 'number' && Number.isFinite(contextLength) && contextLength > 0) {
+            row.contextLength = contextLength;
+          }
+        } catch {
+          // Keep the limit unknown when Ollama cannot provide model metadata.
+        }
+        return row;
+      }));
+      models.push(...ollamaRows);
+    } catch {
+      logger.warn('Ollama not available for model listing');
+    }
   }
 
   try {
