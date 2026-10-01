@@ -417,7 +417,7 @@ export class Agent {
     await summarizeHistory(this.context, this.provider, this.model, handlers, this.config.serviceTier);
   }
 
-  async chat(userInput: string, handlers?: ChatHandlers): Promise<{ content: string; usage: TokenUsage }> {
+  async chat(userInput: string, handlers?: ChatHandlers): Promise<{ content: string; usage: TokenUsage; contextUsage?: TokenUsage }> {
     this.context.addMessage({ role: 'user', content: userInput });
     this.stats.resetCurrent();
     this.activeAbortSignal = handlers?.signal;
@@ -484,7 +484,8 @@ export class Agent {
       );
 
       result = { content: loopResult.content, usage: this.stats.getCurrent() };
-      return result;
+      // Billing includes every tool round; context occupancy is the last request only.
+      return { ...result, contextUsage: loopResult.usage };
     } catch (error: any) {
       if (handlers?.signal?.aborted) {
         this.subagentJobs.cancel('parent aborted');
