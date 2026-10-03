@@ -75,6 +75,8 @@ export function applyStreamEvent(
     case 'tool.call.end':
       return tracker.activities.get(event.toolCallId) ?? null;
 
+    case 'rate_limit.wait':
+    case 'rate_limit.resumed':
     case 'subagent.task.started':
     case 'subagent.task.progress':
     case 'subagent.task.completed':

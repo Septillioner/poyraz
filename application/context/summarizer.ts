@@ -1,5 +1,5 @@
 import type { ChatHandlers } from '../../domain/events.js';
-import { emitEvent } from '../../domain/events.js';
+import { emitEvent, rateLimitStreamEvent } from '../../domain/events.js';
 import type { ChatMessage, LLMProvider, ServiceTier } from '../../domain/llm.js';
 import { logger } from '../../shared/logger.js';
 import type { MessageContext } from './message-context.js';
@@ -96,6 +96,8 @@ export async function summarizeHistory(
       model,
       messages: [{ role: 'user', content: summaryPrompt }],
       serviceTier,
+      signal: handlers?.signal,
+      onRateLimit: (notice) => emitEvent(handlers, rateLimitStreamEvent(notice)),
     });
 
     const summaryMessage: ChatMessage = {

@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import type { ChatMessage, LLMProvider, ReasoningConfig, ServiceTier, TokenUsage } from '../../domain/llm.js';
 import type { AgentStreamEvent } from '../../domain/events.js';
+import { rateLimitStreamEvent } from '../../domain/events.js';
 import type { AgentPolicy } from '../../domain/agent-policy.js';
 import type { TodoSnapshot } from '../../domain/task.js';
 import { logger } from '../../shared/logger.js';
@@ -182,6 +183,7 @@ export async function runDecisionLoop(
           reasoning: deps.reasoning,
           serviceTier: deps.serviceTier,
           signal: handlers.signal,
+          onRateLimit: (notice) => handlers.onEvent?.(rateLimitStreamEvent(notice)),
         },
         (token) => {
           if (bufferTextUntilAccepted) {

@@ -29,7 +29,21 @@ export type {
   SubagentTaskPhase,
   ChatHandlers,
 } from './domain/events.js';
-export { emitEvent } from './domain/events.js';
+export { emitEvent, rateLimitStreamEvent } from './domain/events.js';
+
+export {
+  isRateLimitError,
+  isAbortError,
+  parseDurationMs,
+  rateLimitReason,
+  resolveRateLimitDelay,
+  sleepWithSignal,
+  withRateLimitRetry,
+  RATE_LIMIT_FALLBACK_DELAY_MS,
+  RATE_LIMIT_MAX_DELAY_MS,
+  RATE_LIMIT_MIN_DELAY_MS,
+} from './infrastructure/llm/rate-limit.js';
+export type { RateLimitDelay, RateLimitRetryOptions } from './infrastructure/llm/rate-limit.js';
 
 export { ChatAbortedError, assertNotAborted } from './shared/chat-aborted.js';
 
@@ -74,6 +88,9 @@ export type {
   TokenUsage,
   ToolCall,
   AgentError,
+  RateLimitDelaySource,
+  RateLimitNotice,
+  RateLimitWait,
 } from './domain/llm.js';
 
 export {

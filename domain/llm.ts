@@ -20,6 +20,21 @@ export function isServiceTier(value: unknown): value is ServiceTier {
   return typeof value === 'string' && (SERVICE_TIERS as readonly string[]).includes(value);
 }
 
+/** Where the wait before a rate-limited retry came from. */
+export type RateLimitDelaySource = 'header' | 'message' | 'fallback';
+
+export interface RateLimitWait {
+  attempt: number;
+  delayMs: number;
+  retryAt: number;
+  source: RateLimitDelaySource;
+  reason?: string;
+}
+
+export type RateLimitNotice =
+  | ({ kind: 'wait' } & RateLimitWait)
+  | { kind: 'resumed'; attempt: number };
+
 export interface ChatMessageProviderMeta {
   gemini?: {
     modelContent: Content;
@@ -64,6 +79,8 @@ export interface ChatOptions {
   reasoning?: ReasoningConfig;
   serviceTier?: ServiceTier;
   signal?: AbortSignal;
+  /** Reports a TPM/RPM wait so the caller can show it and keep the turn alive. */
+  onRateLimit?: (notice: RateLimitNotice) => void;
 }
 
 export interface TokenUsage {

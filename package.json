@@ -25,6 +25,7 @@
     "test:watch": "vitest",
     "test:integration": "vitest run tests/integration",
     "test:coverage": "vitest run --coverage",
+    "verify:rate-limit": "tsx scripts/verify-rate-limit.ts",
     "eval": "tsx evals/runner.ts",
     "eval:compare": "tsx evals/compare-results.ts",
     "eval:visualize": "tsx evals/visualize-history.ts"

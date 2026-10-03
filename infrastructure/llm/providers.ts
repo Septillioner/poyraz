@@ -19,6 +19,7 @@ import {
   toResponsesInput,
   toResponsesTools,
 } from './openai-responses.js';
+import { isRateLimitError, withRateLimitRetry } from './rate-limit.js';
 
 export class OllamaProvider implements LLMProvider {
   private ollama: Ollama;
@@ -168,6 +169,36 @@ export class OpenAIProvider implements LLMProvider {
     onToken?: (token: string) => void,
     onReasoning?: (delta: string) => void
   ): Promise<ChatResponse> {
+    return withRateLimitRetry(
+      {
+        model: options.model,
+        signal: options.signal,
+        onRateLimit: options.onRateLimit,
+      },
+      (markEmitted) =>
+        this.streamResponses(
+          options,
+          onToken
+            ? (token) => {
+                markEmitted();
+                onToken(token);
+              }
+            : undefined,
+          onReasoning
+            ? (delta) => {
+                markEmitted();
+                onReasoning(delta);
+              }
+            : undefined
+        )
+    );
+  }
+
+  private async streamResponses(
+    options: ChatOptions,
+    onToken?: (token: string) => void,
+    onReasoning?: (delta: string) => void
+  ): Promise<ChatResponse> {
     const { instructions, input } = toResponsesInput(options.messages);
     const tools = toResponsesTools(options.tools);
 
@@ -247,6 +278,9 @@ export class OpenAIProvider implements LLMProvider {
       if (options.signal?.aborted || error?.name === 'AbortError') {
         throw new ChatAbortedError();
       }
+      // Keep the original error for rate limits: its headers carry the window
+      // the retry has to wait out.
+      if (isRateLimitError(error)) throw error;
       logger.error('Responses stream processing error', { error: error.message });
       const streamError = new Error(error?.message || 'Responses stream failed');
       streamError.name = 'ResponsesStreamProcessingError';
@@ -261,6 +295,29 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   private async chatViaCompletions(
+    options: ChatOptions,
+    onToken?: (token: string) => void
+  ): Promise<ChatResponse> {
+    return withRateLimitRetry(
+      {
+        model: options.model,
+        signal: options.signal,
+        onRateLimit: options.onRateLimit,
+      },
+      (markEmitted) =>
+        this.streamCompletions(
+          options,
+          onToken
+            ? (token) => {
+                markEmitted();
+                onToken(token);
+              }
+            : undefined
+        )
+    );
+  }
+
+  private async streamCompletions(
     options: ChatOptions,
     onToken?: (token: string) => void
   ): Promise<ChatResponse> {

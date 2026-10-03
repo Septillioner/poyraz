@@ -21,6 +21,13 @@ const handlers: ChatHandlers = {
       case 'reasoning.delta':
         appendToReasoning(event.delta);
         break;
+      case 'rate_limit.wait':
+        // TPM/RPM limit: event.delayMs from now, then the same request is retried
+        showRateLimitWait(event.delayMs, event.retryAt, event.reason);
+        break;
+      case 'rate_limit.resumed':
+        clearRateLimitWait();
+        break;
       case 'tool.call.start':
         showToolRunning(event.toolName, event.args);
         break;
@@ -66,6 +73,8 @@ ac.abort();
 | `lifecycle` | `phase` | `thinking`, `summarizing`, `summarized` |
 | `text.delta` | `delta` | Assistant text stream |
 | `reasoning.delta` | `delta` | Reasoning stream when the provider emits it |
+| `rate_limit.wait` | `attempt`, `delayMs`, `retryAt`, `source`, `reason?` | Rate limited (TPM/RPM); waiting `delayMs` before the same request is retried. `source` is `header`, `message`, or `fallback` |
+| `rate_limit.resumed` | `attempt` | The wait ended and the request is being sent again |
 | `tool.call.start` | `toolCallId`, `toolName`, `args` | Tool about to run |
 | `tool.call.end` | `toolCallId` | Tool execution finished |
 | `tool.call.result` | `toolCallId`, `toolName`, `content`, `ok`, `error?`, `meta?` | Tool output |
@@ -81,3 +90,14 @@ ac.abort();
 `agent.subscribeSubagentEvents(listener)` receives the same subagent events across parent turns (useful when the child outlives a single `chat()` call).
 
 `emitEvent(handlers, event)` is available if you build a custom loop that reuses the same event shape.
+
+## Rate limits
+
+`OpenAIProvider` (OpenAI, OpenRouter, Groq, llama.cpp) never ends a turn on a TPM/RPM rejection. On a 429 it waits and repeats the same request:
+
+1. `x-ratelimit-reset-tokens` or `x-ratelimit-reset-requests`, picking the window named in the message, otherwise the longer one.
+2. `retry-after-ms`, then `retry-after` (delay or HTTP date).
+3. The `Please try again in 12.5s` hint in the message body.
+4. A fixed `RATE_LIMIT_FALLBACK_DELAY_MS` (20s) when the provider recommends nothing.
+
+The wait is clamped to 1s..10min, aborts instantly when the turn is cancelled, and never repeats a request that already streamed output to the caller. The same protection covers `/summary`, because the summarizer goes through the same provider.
