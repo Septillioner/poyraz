@@ -1,5 +1,5 @@
 import { Agent } from './agent.js';
-import type { AgentConfig, AgentDelegationConfig, AgentTemplate, Skill } from './config.js';
+import type { AgentConfig, AgentTemplate, Skill } from './config.js';
 import { normalizeSkills } from '../../tools/definitions/skills.js';
 import type { AgentPolicy } from '../../domain/agent-policy.js';
 import type { TodoStore } from '../../domain/todo-store.js';
@@ -247,10 +247,7 @@ export class AgentBuilder {
     return this;
   }
 
-  Delegation(delegation: AgentDelegationConfig | null): this {
-    this.config.delegation = delegation ?? undefined;
-    return this;
-  }
+
 
   private finalizeTools() {
     if (this.toolsFinalized) return;

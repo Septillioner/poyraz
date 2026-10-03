@@ -77,14 +77,9 @@ export function applyStreamEvent(
 
     case 'rate_limit.wait':
     case 'rate_limit.resumed':
-    case 'subagent.task.started':
-    case 'subagent.task.progress':
-    case 'subagent.task.completed':
-    case 'subagent.task.failed':
-    case 'subagent.task.cancelled':
-    case 'subagent.task.injected':
-    case 'subagent.tool.start':
-    case 'subagent.tool.result':
+
+
+
       return null;
 
     default:

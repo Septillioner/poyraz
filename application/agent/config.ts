@@ -1,6 +1,5 @@
 import type { LLMProvider, ReasoningConfig, ServiceTier } from '../../domain/llm.js';
 import type { AgentPolicy } from '../../domain/agent-policy.js';
-import type { ModelProfile } from '../../domain/model-profile.js';
 import type { TodoStore } from '../../domain/todo-store.js';
 import type { ToolPresetName } from '../../tools/core/registry.js';
 import type { LogLevel } from '../../shared/logger.js';
@@ -8,11 +7,6 @@ import type { ToolDefinition } from '../../tools/core/types.js';
 import type { ToolRoutingPolicy } from '../chat/tool-policy.js';
 
 export type { ToolRoutingPolicy };
-
-export interface AgentDelegationConfig {
-  modelProfile: ModelProfile;
-  apiKey: string;
-}
 
 export interface Skill {
   name: string;
@@ -48,8 +42,8 @@ export interface AgentConfig {
   todoStore?: TodoStore;
   /** Active behavioral policy (tool allow-list, gates). */
   policy?: AgentPolicy;
-  /** When set, enables delegate_task with this child profile/key. */
-  delegation?: AgentDelegationConfig;
+
+
 }
 
 export interface AgentTemplate {

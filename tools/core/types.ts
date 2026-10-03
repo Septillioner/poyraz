@@ -1,26 +1,11 @@
 import { z } from 'zod';
 import { logger } from '../../shared/logger.js';
-import type { AgentError, TokenUsage } from '../../domain/llm.js';
-import type { ModelProfile } from '../../domain/model-profile.js';
+import type { AgentError } from '../../domain/llm.js';
 import type { TodoStore } from '../../domain/todo-store.js';
 
 export interface LastReadFileState {
   path: string;
   lineCount: number;
-}
-
-export interface DelegateTaskResult {
-  content: string;
-  usage: TokenUsage;
-  modelProfile: ModelProfile;
-}
-
-/** Immediate ack returned when a background subagent starts. */
-export interface DelegateTaskStartResult {
-  taskId: string;
-  status: 'running';
-  model: string;
-  content: string;
 }
 
 /** Opaque host handle — avoid importing Agent (breaks tools ↔ agent cycle under Vitest). */
@@ -32,8 +17,6 @@ export interface ToolContext {
   sessionId?: string;
   abortSignal?: AbortSignal;
   lastReadFile?: LastReadFileState;
-  /** Starts one background subagent and returns immediately. */
-  delegateTask?: (task: string) => Promise<DelegateTaskStartResult>;
   todoStore?: TodoStore;
 }
 

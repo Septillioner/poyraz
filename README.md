@@ -47,8 +47,7 @@ Supported providers: OpenAI, Groq, Gemini, OpenRouter, Ollama.
 | Built-in tools | Filesystem, shell, search, todos | [Tools](docs/tools.md) |
 | Custom tools | `defineTool` + register on the agent | [Custom tools](docs/custom-tools.md) |
 | MCP | Connect servers you pass in; merge tools onto the agent | [MCP](docs/mcp.md) |
-| Subagents | Explicit `delegation` config + `delegate_task` | [Subagents](docs/subagents.md) |
-| Streaming | Fine-grained agent / tool / subagent events | [Streaming](docs/streaming.md) |
+| Streaming | Fine-grained agent and tool events | [Streaming](docs/streaming.md) |
 | Context | Summarization, todo injection, session history | [How it works](docs/how-it-works.md) |
 
 ## Terminal CLI

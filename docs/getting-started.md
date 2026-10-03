@@ -39,5 +39,4 @@ The library does not load `.env` files. Pass keys (and optional `TodoStore`, `Ag
 - [Agent policy](modes.md) (generic policies; CLI modes live in poyraz-cli)
 - [Tools](tools.md)
 - [MCP](mcp.md)
-- [Subagents](subagents.md)
 - [Agent API](agent-api.md)

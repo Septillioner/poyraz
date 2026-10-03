@@ -1,6 +1,6 @@
 export { Agent, type AgentConfig } from './application/agent/agent.js';
 export { AgentBuilder } from './application/agent/agent-builder.js';
-export type { AgentTemplate, AgentDelegationConfig, Skill } from './application/agent/config.js';
+export type { AgentTemplate, Skill } from './application/agent/config.js';
 export type { ToolRoutingPolicy } from './application/chat/tool-policy.js';
 
 export { buildSystemPrompt, BASE_PROMPT } from './application/prompt/system-prompt.js';
@@ -26,7 +26,6 @@ export {
 export type {
   AgentStreamEvent,
   LifecyclePhase,
-  SubagentTaskPhase,
   ChatHandlers,
 } from './domain/events.js';
 export { emitEvent, rateLimitStreamEvent } from './domain/events.js';
@@ -113,35 +112,6 @@ export { fetchModelInfo, fetchModelInfoForId } from './application/services/mode
 export type { ModelInfo } from './application/services/model-info.js';
 
 export { LOAD_SKILL_TOOL_NAME } from './tools/definitions/skills.js';
-export {
-  DELEGATE_TASK_TOOL_NAME,
-  SUBAGENT_MAX_TOOL_ROUNDS,
-  SUBAGENT_READ_ONLY_TOOLS,
-} from './application/services/subagent-constants.js';
-export {
-  buildSubagentConfig,
-  runSubagentTask,
-  DEFAULT_SUBAGENT_POLICY,
-} from './application/services/subagent-runner.js';
-export type {
-  SubagentChatCapable,
-  SubagentRunResult,
-  SubagentRunnerOptions,
-} from './application/services/subagent-runner.js';
-export { SubagentJobManager } from './application/services/subagent-job-manager.js';
-export type {
-  DelegateTaskStartResult,
-  SubagentJobPhase,
-  SubagentJobSnapshot,
-  SubagentJobStartOptions,
-} from './application/services/subagent-job-manager.js';
-export {
-  buildSubagentCancelledNotice,
-  buildSubagentCompletionNotice,
-  buildSubagentFailureNotice,
-  previewSubagentContent,
-} from './application/chat/subagent-result-gate.js';
-
 export type { TodoStore } from './domain/todo-store.js';
 export {
   createInMemoryTodoStore,

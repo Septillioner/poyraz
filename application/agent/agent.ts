@@ -31,7 +31,6 @@ import {
   resolveRepeatCallLimit,
 } from './tool-resolver.js';
 import type { AgentConfig } from './config.js';
-import type { AgentDelegationConfig } from './config.js';
 import {
   DEFAULT_AGENT_POLICY,
   resolvePolicyDenied,
@@ -41,8 +40,6 @@ import {
 import type { TodoStore } from '../../domain/todo-store.js';
 import { createInMemoryTodoStore } from '../../infrastructure/persistence/in-memory-todo-store.js';
 import type { TodoSnapshot } from '../../domain/task.js';
-import { DELEGATE_TASK_TOOL_NAME } from '../services/subagent-constants.js';
-import { SubagentJobManager } from '../services/subagent-job-manager.js';
 
 export type { AgentConfig };
 
@@ -65,10 +62,7 @@ export class Agent {
   private historyLoaded = false;
   private chatLogSource: ChatDebugLogSource = 'cli';
   private activeAbortSignal?: AbortSignal;
-  private activeChatOnEvent?: (event: AgentStreamEvent) => void;
-  private readonly subagentEventListeners = new Set<(event: AgentStreamEvent) => void>();
   private readonly toolContext: ToolContext = {};
-  private readonly subagentJobs = new SubagentJobManager();
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -106,7 +100,6 @@ export class Agent {
 
     this.baseTools = resolveAgentTools(config);
     this.tools = {};
-    this.syncDelegationTool();
     this.syncSkillTool();
     this.applyPolicy();
 
@@ -118,33 +111,6 @@ export class Agent {
   /**
    * Adds or removes `delegate_task` from the live tool set based on agent delegation config.
    */
-  syncDelegationTool(): void {
-    const shouldHave = Boolean(this.config.delegation) && this.templateAllowsDelegationTool();
-
-    if (!shouldHave) {
-      if (this.subagentJobs.isRunning()) {
-        this.subagentJobs.cancel('delegation cleared');
-      }
-      if (this.subagentJobs.isBusy() || this.subagentJobs.isRunning()) {
-        this.subagentJobs.reset();
-      }
-      if (!this.baseTools[DELEGATE_TASK_TOOL_NAME]) return;
-      delete this.baseTools[DELEGATE_TASK_TOOL_NAME];
-      this.applyPolicy();
-      return;
-    }
-
-    if (!this.baseTools[DELEGATE_TASK_TOOL_NAME]) {
-      const def =
-        resolveAgentTools(this.config)[DELEGATE_TASK_TOOL_NAME] ??
-        toolRegistry.get(DELEGATE_TASK_TOOL_NAME);
-      if (!def) return;
-      this.baseTools[DELEGATE_TASK_TOOL_NAME] = def;
-    }
-
-    this.applyPolicy();
-  }
-
   private syncSkillTool(): void {
     const skills = normalizeSkills(this.config.skills);
     this.config.skills = skills.length > 0 ? skills : undefined;
@@ -159,61 +125,6 @@ export class Agent {
 
     this.baseTools[LOAD_SKILL_TOOL_NAME] = createLoadSkillTool(skills);
     this.applyPolicy();
-  }
-
-  setDelegation(delegation: AgentDelegationConfig | null): void {
-    this.config.delegation = delegation ?? undefined;
-    this.syncDelegationTool();
-  }
-
-  getDelegation(): AgentDelegationConfig | undefined {
-    return this.config.delegation;
-  }
-
-  getSubagentJobStatus() {
-    return this.subagentJobs.getSnapshot();
-  }
-
-  cancelActiveSubagent(reason = 'cancelled by parent'): void {
-    this.subagentJobs.cancel(reason);
-  }
-
-  /**
-   * Persistent listener for background subagent lifecycle events.
-   * Survives parent chat turns so the CLI can show progress while idle.
-   */
-  subscribeSubagentEvents(listener: (event: AgentStreamEvent) => void): () => void {
-    this.subagentEventListeners.add(listener);
-    return () => {
-      this.subagentEventListeners.delete(listener);
-    };
-  }
-
-  private emitSubagentEvent(event: AgentStreamEvent): void {
-    this.activeChatOnEvent?.(event);
-    for (const listener of this.subagentEventListeners) {
-      listener(event);
-    }
-  }
-
-  private flushSubagentPending(onEvent?: (event: AgentStreamEvent) => void): boolean {
-    const flushed = this.subagentJobs.flushPending();
-    if (!flushed) return false;
-    this.context.addMessage({ role: 'user', content: flushed.notice });
-    const injected: AgentStreamEvent = { type: 'subagent.task.injected', taskId: flushed.taskId };
-    onEvent?.(injected);
-    for (const listener of this.subagentEventListeners) {
-      listener(injected);
-    }
-    return true;
-  }
-
-  private templateAllowsDelegationTool(): boolean {
-    if (this.config.excludeTools?.includes(DELEGATE_TASK_TOOL_NAME)) return false;
-    if (this.config.tools && Object.keys(this.config.tools).length > 0) {
-      return Boolean(this.config.tools[DELEGATE_TASK_TOOL_NAME]);
-    }
-    return Boolean(resolveAgentTools(this.config)[DELEGATE_TASK_TOOL_NAME]);
   }
 
   private applyPolicy(): void {
@@ -421,9 +332,6 @@ export class Agent {
     this.context.addMessage({ role: 'user', content: userInput });
     this.stats.resetCurrent();
     this.activeAbortSignal = handlers?.signal;
-    this.activeChatOnEvent = handlers?.onEvent;
-    // Re-link so Ctrl+C on this turn cancels a still-running background child.
-    this.subagentJobs.attachParentSignal(handlers?.signal);
 
     logger.info('User message received', { agent: this.name, input: userInput });
 
@@ -431,9 +339,6 @@ export class Agent {
     let chatError: string | undefined;
 
     try {
-      // Flush any background result that finished between turns.
-      this.flushSubagentPending(handlers?.onEvent);
-
       const policyGuard = createToolPolicyGuard(this.policyConfig);
       policyGuard.reset();
 
@@ -461,18 +366,6 @@ export class Agent {
           getPromptCacheKey: () => this.getPromptCacheKey(),
           signal: handlers?.signal,
           getTodoSnapshot: () => this.getTodoSnapshot(),
-          onBeforeRound: async () => {
-            this.flushSubagentPending(handlers?.onEvent);
-          },
-          waitForSubagentIfNeeded: async () => {
-            if (!this.subagentJobs.isRunning() && !this.subagentJobs.hasPendingFlush()) {
-              return false;
-            }
-            if (this.subagentJobs.isRunning()) {
-              await this.subagentJobs.waitUntilSettled();
-            }
-            return this.flushSubagentPending(handlers?.onEvent);
-          },
         }
       );
 
@@ -487,18 +380,11 @@ export class Agent {
       // Billing includes every tool round; context occupancy is the last request only.
       return { ...result, contextUsage: loopResult.usage };
     } catch (error: any) {
-      if (handlers?.signal?.aborted) {
-        this.subagentJobs.cancel('parent aborted');
-        this.flushSubagentPending(handlers?.onEvent);
-      }
       chatError = error.message;
       logger.error('Chat error', { error: error.message });
       throw error;
     } finally {
       this.activeAbortSignal = undefined;
-      this.activeChatOnEvent = undefined;
-      // Keep the child running across turns; only explicit abort cancels it.
-      this.subagentJobs.attachParentSignal(undefined);
       void writeChatDebugLog({
         timestamp: new Date().toISOString(),
         source: this.chatLogSource,
@@ -520,18 +406,6 @@ export class Agent {
     this.toolContext.sessionId = this.sessionId;
     this.toolContext.abortSignal = this.activeAbortSignal;
     this.toolContext.todoStore = this.todoStore;
-    this.toolContext.delegateTask = this.config.delegation
-      ? async (task: string) =>
-          this.subagentJobs.start({
-            task,
-            createAgent: (config) => new Agent(config),
-            parentSignal: this.activeAbortSignal,
-            onEvent: (event) => this.emitSubagentEvent(event),
-            onUsage: (usage) => this.recordExternalUsage(usage),
-            modelProfile: this.config.delegation!.modelProfile,
-            apiKey: this.config.delegation!.apiKey,
-          })
-      : undefined;
     return this.toolContext;
   }
 }

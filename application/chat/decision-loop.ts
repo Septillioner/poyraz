@@ -63,16 +63,12 @@ export interface DecisionLoopHandlers {
   onEvent?: (event: AgentStreamEvent) => void;
   onUsage?: (usage: TokenUsage) => void;
   buildToolContext: () => ToolContext;
-  onBeforeRound?: () => Promise<void>;
+
   getPromptCacheKey?: () => string | undefined;
   signal?: AbortSignal;
   /** Agent-mode completion gate: current todo snapshot for this session. */
   getTodoSnapshot?: () => Promise<TodoSnapshot>;
-  /**
-   * When the model is about to return a final text answer, wait for any running
-   * background subagent, inject its result, and return true to continue the loop.
-   */
-  waitForSubagentIfNeeded?: () => Promise<boolean>;
+
 }
 
 function parseToolCallArgs(rawArgs: unknown): Record<string, unknown> {
@@ -164,10 +160,7 @@ export async function runDecisionLoop(
       round++;
       assertNotAborted(handlers.signal);
 
-      if (handlers.onBeforeRound) {
-        await handlers.onBeforeRound();
-      }
-      assertNotAborted(handlers.signal);
+
 
       handlers.onEvent?.({ type: 'lifecycle', phase: 'thinking' });
 
@@ -266,20 +259,11 @@ export async function runDecisionLoop(
           }
         }
 
-        if (handlers.waitForSubagentIfNeeded) {
-          const injected = await handlers.waitForSubagentIfNeeded();
-          if (injected) {
-            logger.info('Subagent finalization gate: synthesizing with injected result');
-            continue;
-          }
-        }
-
         if (bufferTextUntilAccepted) {
           flushTextDelta(handlers, textBuffer || response.content || '');
         }
         return { content: response.content, usage: response.usage ?? lastUsage };
       }
-
       if (bufferTextUntilAccepted) {
         flushTextDelta(handlers, textBuffer || response.content || '');
       }

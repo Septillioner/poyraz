@@ -55,7 +55,6 @@ If you pass neither presets nor explicit tools, the agent stays bare: no tools. 
 | `RoutingPolicy(partial)` | `maxToolRounds`, `repeatCallLimit`, `deterministicMode`, … |
 | `Policy(policy)` | Set `AgentPolicy` (tool allow-list, gates) |
 | `TodoStore(store)` | Inject todo persistence (default: in-memory) |
-| `Delegation(config \| null)` | Enable/disable `delegate_task` with explicit child profile + key |
 | `LogLevel(level)` | Logger level for this agent |
 | `FromTemplate(template)` / `FromJSON(json)` | Load from an `AgentTemplate` / JSON object |
 
@@ -103,8 +102,6 @@ Throws `ChatAbortedError` when the abort signal fires.
 | Method | Description |
 |--------|-------------|
 | `getPolicy()` / `setPolicy(policy)` | Active `AgentPolicy` |
-| `getDelegation()` / `setDelegation(config \| null)` | Child model for `delegate_task` |
-| `syncDelegationTool()` | Refresh `delegate_task` presence from current delegation config |
 | `getTools()` | Tools allowed under the **current** policy |
 | `mergeExternalTools(tools)` | Add MCP (or other) tools into the base set |
 | `removeExternalTools(prefix?)` | Remove tools by name prefix (default `mcp_`) |
