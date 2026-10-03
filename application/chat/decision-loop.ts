@@ -193,6 +193,18 @@ export async function runDecisionLoop(
       if (response.usage) {
         lastUsage = response.usage;
         handlers.onUsage?.(response.usage);
+        // Published before the abort check so a cancelled turn still reports the
+        // request it already paid for. The prompt is measured on the history that
+        // was actually sent, before this round's assistant message is appended.
+        handlers.onEvent?.({
+          type: 'context.usage',
+          promptTokens: response.usage.promptTokens,
+          completionTokens: response.usage.completionTokens,
+          totalTokens: response.usage.totalTokens,
+          cachedTokens: response.usage.cachedTokens,
+          round,
+          final: isToolLoopBlocked() || !response.tool_calls?.length,
+        });
       }
       assertNotAborted(handlers.signal);
 

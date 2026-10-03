@@ -57,6 +57,8 @@ export class Agent {
   private todoStore: TodoStore;
   private context = createMessageContext({});
   private stats = createTokenStats();
+  /** Usage of the most recent model request; what currently occupies the window. */
+  private lastRequestUsage?: TokenUsage;
   private sessionId?: string;
   private builtPrompt?: BuiltSystemPrompt;
   private historyLoaded = false;
@@ -242,6 +244,15 @@ export class Agent {
     };
   }
 
+  /**
+   * Usage of the last model request of the current turn, or `undefined` when no
+   * request has completed yet. Stays readable while a turn is aborted, so callers
+   * can report what the cancelled turn actually consumed.
+   */
+  getContextUsage(): TokenUsage | undefined {
+    return this.lastRequestUsage ? { ...this.lastRequestUsage } : undefined;
+  }
+
   setSessionUsage(usage: TokenUsage) {
     this.stats.setSessionTotal(usage);
   }
@@ -331,6 +342,7 @@ export class Agent {
   async chat(userInput: string, handlers?: ChatHandlers): Promise<{ content: string; usage: TokenUsage; contextUsage?: TokenUsage }> {
     this.context.addMessage({ role: 'user', content: userInput });
     this.stats.resetCurrent();
+    this.lastRequestUsage = undefined;
     this.activeAbortSignal = handlers?.signal;
 
     logger.info('User message received', { agent: this.name, input: userInput });
@@ -361,7 +373,10 @@ export class Agent {
           getMessages: () => this.context.getMessages(),
           addMessage: (message) => this.context.addMessage(message),
           onEvent: handlers?.onEvent,
-          onUsage: (usage) => this.stats.addUsage(usage),
+          onUsage: (usage) => {
+            this.lastRequestUsage = usage;
+            this.stats.addUsage(usage);
+          },
           buildToolContext: () => this.buildToolContext(),
           getPromptCacheKey: () => this.getPromptCacheKey(),
           signal: handlers?.signal,

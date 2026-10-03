@@ -6,6 +6,22 @@ export type AgentStreamEvent =
   | { type: 'lifecycle'; phase: LifecyclePhase }
   | { type: 'text.delta'; delta: string }
   | { type: 'reasoning.delta'; delta: string }
+  /**
+   * Emitted after every model request of a turn, before the turn can be aborted.
+   * `promptTokens` is what the provider actually received, so it is the live
+   * window occupancy and stays readable even for a cancelled turn.
+   */
+  | {
+      type: 'context.usage';
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+      cachedTokens?: number;
+      /** 1-based position of this request within the turn. */
+      round: number;
+      /** Whether the turn ends after this request. */
+      final: boolean;
+    }
   /** A rate-limited request is waiting out its window and will be retried. */
   | {
       type: 'rate_limit.wait';
