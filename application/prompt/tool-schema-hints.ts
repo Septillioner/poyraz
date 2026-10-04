@@ -63,7 +63,7 @@ const TOOL_HINTS: Record<string, ToolHint> = {
     ],
     example: '{ "pattern": "buildSystemPrompt", "path": "poyraz" }',
     altExamples: [
-      '{ "pattern": "todo_write", "glob": "*.ts", "head_limit": 20, "-A": 2 }',
+      '{ "pattern": "buildSystemPrompt", "glob": "*.ts", "head_limit": 20, "-A": 2 }',
       '{ "pattern": "export function", "output_mode": "files_with_matches", "path": "poyraz" }',
     ],
   },
@@ -76,15 +76,6 @@ const TOOL_HINTS: Record<string, ToolHint> = {
       '{ "command": "cd my-app && npm install", "is_background": false }',
       '{ "command": "cd my-app && npm run dev", "is_background": true }',
       '{ "command": "npm create vite@latest my-app -- --template react", "is_background": false }',
-    ],
-  },
-  todo_write: {
-    required: ['merge', 'todos'],
-    example:
-      '{ "merge": false, "todos": [{ "id": "1", "content": "Step one", "status": "pending" }, { "id": "2", "content": "Step two", "status": "pending" }] }',
-    altExamples: [
-      '{ "merge": true, "todos": [{ "id": "1", "content": "Step one", "status": "completed" }] }',
-      '{ "merge": true, "todos": [{ "id": "2", "content": "Step two", "status": "blocked", "blockedReason": "Missing API credentials" }] }',
     ],
   },
   http_request: {
@@ -176,7 +167,7 @@ const TOOL_GUIDANCE: Record<string, ToolGuidance> = {
     ],
     examples: [
       '<example>\nGood: Find symbol in a directory:\n{ "pattern": "buildSystemPrompt", "path": "poyraz/application/prompt" }\n</example>',
-      '<example>\nGood: List files containing a pattern:\n{ "pattern": "todo_write", "output_mode": "files_with_matches", "glob": "*.ts" }\n</example>',
+      '<example>\nGood: List files containing a pattern:\n{ "pattern": "buildSystemPrompt", "output_mode": "files_with_matches", "glob": "*.ts" }\n</example>',
       '<example>\nBad: { "pattern": "auth", "limit": 10 } — use head_limit instead.\n</example>',
     ],
   },
@@ -206,25 +197,6 @@ const TOOL_GUIDANCE: Record<string, ToolGuidance> = {
       '<example>\nBad: Redundant cd when already in my-app:\n{ "command": "cd my-app && npm run dev", "is_background": true }\n</example>',
       '<example>\nBad: mkdir frontend backend — unreliable on Windows; use two mkdir calls.\n</example>',
       '<example>\nBad: Dev server in foreground — blocked:\n{ "command": "npm run dev", "is_background": false }\n</example>',
-    ],
-  },
-  todo_write: {
-    whenToUse: [
-      'Complex multi-step tasks (3+ steps) in Agent mode',
-      'Record the full plan once in Plan mode (merge: false), then present plan in text',
-      'Mark items completed immediately after each step',
-      'Mark a step blocked with blockedReason when progress is impossible',
-    ],
-    whenNotToUse: [
-      'Simple one-step tasks',
-      'Ask or Chat mode',
-      'Calling todo_write more than once in the same Plan-mode user turn',
-    ],
-    examples: [
-      '<example>\nGood: Initial task list:\n{ "merge": false, "todos": [{ "id": "explore", "content": "Map prompt modules", "status": "in_progress" }, { "id": "implement", "content": "Expand behavior sections", "status": "pending" }] }\n</example>',
-      '<example>\nGood: Mark one done:\n{ "merge": true, "todos": [{ "id": "explore", "content": "Map prompt modules", "status": "completed" }] }\n</example>',
-      '<example>\nGood: Mark blocked:\n{ "merge": true, "todos": [{ "id": "deploy", "content": "Deploy service", "status": "blocked", "blockedReason": "No production credentials available" }] }\n</example>',
-      '<example>\nBad: { "tasks": [{ "title": "Step 1" }] } — use todos, id, content, status.\n</example>',
     ],
   },
   delete_file: {

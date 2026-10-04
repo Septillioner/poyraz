@@ -112,12 +112,6 @@ export { fetchModelInfo, fetchModelInfoForId } from './application/services/mode
 export type { ModelInfo } from './application/services/model-info.js';
 
 export { LOAD_SKILL_TOOL_NAME } from './tools/definitions/skills.js';
-export type { TodoStore } from './domain/todo-store.js';
-export {
-  createInMemoryTodoStore,
-  formatPersistedTodos,
-  TodoValidationError,
-} from './infrastructure/persistence/in-memory-todo-store.js';
 
 export {
   logger,
@@ -147,6 +141,3 @@ export { setActiveWorkspaceRoot } from './tools/core/shell-session.js';
 
 export * from './tools/index.js';
 export * from './presentation/ui/index.js';
-
-export { TODO_CONTINUATION_BUDGET } from './application/chat/todo-completion-gate.js';
-export * from './domain/task.js';

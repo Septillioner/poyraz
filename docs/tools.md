@@ -8,7 +8,6 @@ Built-in tools are registered when you import `poyraz`, but an agent gets none u
 |--------|-------|
 | `filesystem` | `read_file`, `edit_file`, `list_dir`, `glob_file_search`, `delete_file` |
 | `shell` | `run_terminal_cmd` |
-| `planning` | `todo_write` |
 | `search` | `grep` |
 
 ```ts
@@ -16,12 +15,12 @@ import { AgentBuilder, openAiProfile } from 'poyraz';
 
 new AgentBuilder()
   .WithModelProfile(openAiProfile('gpt-4o-mini'))
-  .WithPresets('filesystem', 'shell', 'search', 'planning')
+  .WithPresets('filesystem', 'shell', 'search')
   .WithoutTools('delete_file')
   .Build();
 ```
 
-`DefaultSystemTools({ read, write, execute, tasks, search|grep })` maps permission-style flags onto those presets.
+`DefaultSystemTools({ read, write, execute, search|grep })` maps permission-style flags onto those presets.
 
 Constant map: `TOOL_PRESETS`.
 
@@ -54,12 +53,6 @@ Runs a shell command (`command`, `is_background`, optional `explanation`).
 - Remembers cwd per `sessionId`.
 - Foreground timeout: 30 seconds; use `is_background: true` for long jobs.
 - Blocks interactive SSH without `BatchMode=yes` and `sudo` without `-n`.
-
-### `todo_write`
-
-Session todos (`merge`, `todos[]` with `id`, `content`, `status`, optional `blockedReason`).
-
-Statuses: `pending`, `in_progress`, `completed`, `cancelled`, `blocked`. At most one `in_progress`.
 
 ### `grep`
 

@@ -33,7 +33,6 @@ You have tools at your disposal to solve the coding task. Follow these rules reg
 
 Common parameter mistakes (use exact names from <available_tools>):
 - grep: { pattern, path?, head_limit? } — NOT "limit"
-- todo_write: { merge, todos: [{ id, content, status }] } — NOT "tasks", "title", or "items"
 - edit_file: { target_file, code_edit } — NOT "path" or "code"
 - list_dir: { target_directory } — NOT "path"
 - glob_file_search: { glob_pattern } — NOT "pattern" alone for file-name search
@@ -248,35 +247,6 @@ export const INLINE_LINE_NUMBERS = `<inline_line_numbers>
 Code chunks that you receive (via tool calls or from user) may include inline line numbers in the form LINE_NUMBER|LINE_CONTENT. Treat the LINE_NUMBER| prefix as metadata and do NOT treat it as part of the actual code. LINE_NUMBER is right-aligned and padded with spaces.
 </inline_line_numbers>`;
 
-export const TASK_MANAGEMENT = `<task_management>
-You have access to the todo_write tool to help you manage and plan tasks. Use it proactively for complex multi-step tasks (3+ distinct steps). These tools are EXTREMELY helpful for planning and breaking larger tasks into smaller steps.
-It is critical that you mark todos as completed as soon as you are done with a task. Do not batch up multiple tasks before marking them as completed.
-Do not tell the user you are updating todos — just do it.
-If a step is impossible after genuine attempts, mark it blocked with a clear blockedReason instead of silently stopping.
-
-When to use:
-- Complex multi-step implementation, refactor, or investigation
-- User provides multiple tasks or a numbered list
-- Non-trivial work where tracking progress helps avoid missed steps
-
-When NOT to use:
-- Single, straightforward tasks completable in one or two tool calls
-- Purely informational questions (use read-only tools or text only)
-- Trivial fixes (typo, one-line change)
-
-Required shape:
-{ "merge": false, "todos": [{ "id": "step1", "content": "Describe the step", "status": "pending" }] }
-
-- merge: false replaces the entire list; true updates existing items by id
-- status: "pending" | "in_progress" | "completed" | "cancelled" | "blocked"
-- blocked requires blockedReason (why progress is impossible)
-- At most one item may be in_progress at a time
-- completed / cancelled / blocked items cannot be reopened
-- Use "todos" (not "tasks"), "content" (not "title"), "id" for each item
-
-Follow the active [MODE] for whether and how often to call todo_write. When open-todo enforcement is active, mark items completed as you finish and do not end your turn while open todos remain unless they are blocked with reasons.
-</task_management>`;
-
 export const PROJECT_NOTES = `<project_notes>
 You maintain a plain-text notes file named POYRAZ.md in the working directory for important, persistent context across sessions.
 
@@ -286,7 +256,7 @@ What to store:
 - Things the user asks you to "remember" or "unutma"
 
 What NOT to store:
-- Transient task state (use todo_write for session tasks)
+- Transient task state and progress that only matters to the current turn
 - Large code snippets or full file contents
 - Secrets, API keys, or credentials
 
@@ -313,7 +283,6 @@ export const BEHAVIOR_SECTIONS = [
   MAKING_CODE_CHANGES,
   CITING_CODE,
   INLINE_LINE_NUMBERS,
-  TASK_MANAGEMENT,
   PROJECT_NOTES,
 ];
 

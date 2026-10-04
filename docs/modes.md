@@ -10,7 +10,6 @@ const readOnly: AgentPolicy = {
   allowedTools: ['read_file', 'list_dir', 'glob_file_search', 'grep'],
   hardBlockDeniedTools: true,
   deniedToolReason: 'This tool is disabled under the active policy.',
-  enforceOpenTodos: false,
 };
 
 const agent = new AgentBuilder()
@@ -19,7 +18,7 @@ const agent = new AgentBuilder()
   .WithPresets('filesystem', 'search')
   .Build();
 
-agent.setPolicy({ ...DEFAULT_AGENT_POLICY, id: 'agent', enforceOpenTodos: true });
+agent.setPolicy({ ...DEFAULT_AGENT_POLICY, id: 'agent' });
 ```
 
 ## AgentPolicy fields
@@ -31,8 +30,7 @@ agent.setPolicy({ ...DEFAULT_AGENT_POLICY, id: 'agent', enforceOpenTodos: true }
 | `hardBlockDeniedTools` | When true, circuit breakers hard-stop denied tool loops |
 | `deniedToolReason` | Message returned when a tool is denied |
 | `bufferTextUntilAccepted` | Buffer `text.delta` until a text-only reply passes gates |
-| `perTurnToolLimits` | e.g. `{ todo_write: 1 }` |
-| `enforceOpenTodos` | Continue the loop while open todos remain |
+| `perTurnToolLimits` | e.g. `{ write_file: 1 }` |
 | `responseGates` | Ordered gates evaluated before accepting a final text reply |
 
 ## ResponseGate
@@ -43,7 +41,7 @@ import type { ResponseGate } from 'poyraz';
 const gate: ResponseGate = {
   maxRetries: 2,
   evaluate({ content, succeededTools }) {
-    if (content.includes('```') && !succeededTools.has('todo_write')) {
+    if (content.includes('```') && !succeededTools.has('read_file')) {
       return { kind: 'retry', notice: '<system_reminder>Rewrite without code fences.</system_reminder>' };
     }
     return { kind: 'accept' };
@@ -54,7 +52,7 @@ const gate: ResponseGate = {
 
 ## Default policy
 
-`DEFAULT_AGENT_POLICY` is `{ id: 'default', allowedTools: 'all', enforceOpenTodos: true }`.
+`DEFAULT_AGENT_POLICY` is `{ id: 'default', allowedTools: 'all' }`.
 
 ## CLI modes
 

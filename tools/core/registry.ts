@@ -6,9 +6,7 @@ export const TOOL_ALIASES: Record<string, string> = {};
 export const TOOL_PRESETS = {
   filesystem: ['read_file', 'edit_file', 'list_dir', 'glob_file_search', 'delete_file'],
   shell: ['run_terminal_cmd'],
-  planning: ['todo_write'],
   search: ['grep'],
-
 } as const;
 
 export type ToolPresetName = keyof typeof TOOL_PRESETS;

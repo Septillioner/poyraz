@@ -32,10 +32,10 @@ Fluent configuration. Call `Build()` once; tool selection is finalized then.
 
 | Method | Effect |
 |--------|--------|
-| `WithPresets(...presets)` | `filesystem` \| `shell` \| `planning` \| `search` |
+| `WithPresets(...presets)` | `filesystem` \| `shell` \| `search` |
 | `WithTools(...names)` | Include specific tool names |
 | `WithoutTools(...names)` | Exclude names after resolution |
-| `DefaultSystemTools(permissions?)` | Map read/write/execute/tasks/grep flags to presets |
+| `DefaultSystemTools(permissions?)` | Map read/write/execute/grep flags to presets |
 | `RegisterTool(definition)` | Register globally and add to this agent |
 | `AddTool(name, definition)` / `AddTools(map)` | Add definitions on this agent |
 
@@ -54,7 +54,6 @@ If you pass neither presets nor explicit tools, the agent stays bare: no tools. 
 | `Options(record)` | Provider options (`temperature`, `num_ctx`, …) |
 | `RoutingPolicy(partial)` | `maxToolRounds`, `repeatCallLimit`, `deterministicMode`, … |
 | `Policy(policy)` | Set `AgentPolicy` (tool allow-list, gates) |
-| `TodoStore(store)` | Inject todo persistence (default: in-memory) |
 | `LogLevel(level)` | Logger level for this agent |
 | `FromTemplate(template)` / `FromJSON(json)` | Load from an `AgentTemplate` / JSON object |
 
@@ -66,7 +65,7 @@ import { AgentBuilder, openAiProfile, LogLevel } from 'poyraz';
 const agent = new AgentBuilder()
   .Name('coder')
   .WithModelProfile(openAiProfile('gpt-4o'))
-  .WithPresets('filesystem', 'shell', 'search', 'planning')
+  .WithPresets('filesystem', 'shell', 'search')
   .WithoutTools('delete_file')
   .SystemPrompt('You are a careful coding agent.')
   .ContextLimit(80)
@@ -114,7 +113,7 @@ Throws `ChatAbortedError` when the abort signal fires.
 | `getModel()` / `setModel(model)` | Model id |
 | `getModelProfile()` / `setModelProfile(profile, apiKey)` | Full profile + provider swap (apiKey required) |
 | `getName()` | Agent name |
-| `setSessionId(id)` / `getSessionId()` | Session id (todos, shell cwd) |
+| `setSessionId(id)` / `getSessionId()` | Session id (shell cwd) |
 | `getApiKeyPreview()` | Masked key preview or `null` |
 | `getConfig()` | Current `AgentConfig` |
 
@@ -128,7 +127,6 @@ Throws `ChatAbortedError` when the abort signal fires.
 | `getStats()` | Provider token stats (`current` / `session`) |
 | `setSessionUsage(usage)` | Seed session token totals |
 | `summarize()` | Manually run the same rolling summary as `AutoSummary` |
-| `getTodoSnapshot()` / `getCachedTodoSnapshot()` | Todo list for the session |
 | `setChatLogSource(source)` | Tag for debug logging |
 | `getPromptCacheKey()` | Prompt cache key when applicable |
 
@@ -148,7 +146,7 @@ When `AutoSummary` is on and the turn count exceeds `ContextLimit`, older turns 
 - `repeatCallLimit` — identical call signature limit
 - `deterministicMode` — stricter policy guard behavior
 - `deniedTools` / `deniedToolReason` — filled from the active `AgentPolicy`
-- `perTurnToolLimits` — e.g. `{ todo_write: 1 }`
+- `perTurnToolLimits` — e.g. `{ write_file: 1 }`
 
 Behavioral modes (agent/plan/ask/chat) are **not** in this package — hosts map them to `AgentPolicy` plus optional `SystemPrompt` text (see `poyraz-cli`).
 

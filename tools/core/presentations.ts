@@ -16,52 +16,6 @@ function defaultSummarizeResult(content: string) {
 }
 
 export const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
-  todo_write: {
-    label: 'Managing Tasks',
-    icon: 'ListTodo',
-    category: 'planning',
-    summarizeArgs: (args) => {
-      const todos = args.todos as
-        | Array<{ id?: string; content?: string; status?: string; blockedReason?: string }>
-        | undefined;
-      if (!todos?.length) return undefined;
-      const completed = todos.filter((t) => t.status === 'completed').length;
-      const blocked = todos.filter((t) => t.status === 'blocked').length;
-      const inProgress = todos.find((t) => t.status === 'in_progress');
-      const parts = [`${completed}/${todos.length} done`];
-      if (inProgress?.content) parts.push(`active: ${inProgress.content}`);
-      else if (todos[0]?.content) parts.push(todos[0].content);
-      if (blocked > 0) {
-        const reason = todos.find((t) => t.status === 'blocked')?.blockedReason;
-        parts.push(reason ? `blocked: ${reason}` : `${blocked} blocked`);
-      }
-      return parts.join(' · ');
-    },
-    summarizeResult: (content) => {
-      const err = tryParseToolError(content);
-      if (err?.code === 'POLICY_BLOCKED') {
-        return { preview: err.message, status: 'blocked' as const };
-      }
-      if (err) {
-        return { preview: err.message, status: 'error' as const };
-      }
-      const lines = content
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(Boolean);
-      const header = lines[0] ?? 'Todos updated';
-      const items = lines.slice(1);
-      const completed = items.filter((l) => l.includes('[completed]')).length;
-      const blocked = items.filter((l) => l.includes('[blocked]')).length;
-      const open = items.filter(
-        (l) => l.includes('[pending]') || l.includes('[in_progress]')
-      ).length;
-      const preview = `${header} · ${completed} done · ${open} open${
-        blocked ? ` · ${blocked} blocked` : ''
-      }`;
-      return { preview, status: 'success' as const };
-    },
-  },
   read_file: {
     label: 'Reading File',
     icon: 'Code2',

@@ -6,11 +6,11 @@ Poyraz is an embeddable agent runtime: LLM interface, tool registry, context man
 
 | Layer | Responsibility |
 |-------|----------------|
-| domain | Pure types: tasks, LLM messages, `AgentPolicy`, `TodoStore`, MCP defs, model profiles |
+| domain | Pure types: LLM messages, `AgentPolicy`, MCP defs, model profiles |
 | application | `Agent`, decision loop, prompts, summarizer |
-| infrastructure | LLM providers, in-memory todo store, MCP client, chat debug log |
+| infrastructure | LLM providers, MCP client, chat debug log |
 | tools | Built-in tool definitions |
-| presentation | Todo table / activity tracker helpers |
+| presentation | Activity tracker helpers |
 
 ## What the library does **not** do
 
@@ -23,14 +23,8 @@ Those belong in `poyraz-cli` (or your own host).
 
 ## Runtime flow
 
-1. Host builds an `Agent` with explicit `apiKey` and optional `TodoStore` and `AgentPolicy`.
+1. Host builds an `Agent` with explicit `apiKey` and optional `AgentPolicy`.
 2. Host may call `mcpClientManager.connectAll(servers)` and `agent.mergeExternalTools`.
 3. `agent.chat` runs the decision loop: model → tools (policy-filtered) → optional response gates → context summarization.
 4. Streaming events are emitted for UI hosts.
 
-## Persistence injection
-
-```ts
-agent // uses createInMemoryTodoStore() by default
-new AgentBuilder().TodoStore(myFileBackedStore)
-```

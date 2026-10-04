@@ -17,13 +17,12 @@ const ALL_TOOLS = [
   'glob_file_search',
   'grep',
   'run_terminal_cmd',
-  'todo_write',
   'delete_file',
 ];
 
 const PLAN_LIKE: AgentPolicy = {
   id: 'plan',
-  allowedTools: ['read_file', 'list_dir', 'glob_file_search', 'grep', 'todo_write'],
+  allowedTools: ['read_file', 'list_dir', 'glob_file_search', 'grep'],
 };
 
 const ASK_LIKE: AgentPolicy = {
@@ -48,7 +47,7 @@ describe('resolvePolicyTools / resolvePolicyDenied', () => {
     expect(denied).toContain('run_terminal_cmd');
     expect(denied).toContain('delete_file');
     expect(denied).not.toContain('read_file');
-    expect(denied).not.toContain('todo_write');
+    expect(denied).not.toContain('grep');
   });
 
   it('ask-like policy allows only read tools', () => {
@@ -56,7 +55,7 @@ describe('resolvePolicyTools / resolvePolicyDenied', () => {
     expect(allowed).toEqual(['read_file', 'list_dir', 'glob_file_search', 'grep']);
     const denied = resolvePolicyDenied(ALL_TOOLS, ASK_LIKE);
     expect(denied).toContain('edit_file');
-    expect(denied).toContain('todo_write');
+    expect(denied).toContain('delete_file');
   });
 
   it('all-tools policy allows every tool', () => {

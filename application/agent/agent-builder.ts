@@ -2,7 +2,6 @@ import { Agent } from './agent.js';
 import type { AgentConfig, AgentTemplate, Skill } from './config.js';
 import { normalizeSkills } from '../../tools/definitions/skills.js';
 import type { AgentPolicy } from '../../domain/agent-policy.js';
-import type { TodoStore } from '../../domain/todo-store.js';
 import type { ModelProfile } from '../../domain/model-profile.js';
 import { ToolDefinition } from '../../tools/index.js';
 import { toolRegistry, ToolPresetName } from '../../tools/core/registry.js';
@@ -14,14 +13,12 @@ function defaultToolsFromPermissions(permissions: {
   read?: boolean;
   write?: boolean;
   execute?: boolean;
-  tasks?: boolean;
   search?: boolean;
   grep?: boolean;
 }): Record<string, ToolDefinition> {
   const presets: ToolPresetName[] = [];
   if (permissions.read || permissions.write) presets.push('filesystem');
   if (permissions.execute) presets.push('shell');
-  if (permissions.tasks) presets.push('planning');
   if (permissions.grep || permissions.search) presets.push('search');
   return toolRegistry.resolveToolSet({ presets });
 }
@@ -90,10 +87,9 @@ export class AgentBuilder {
       read?: boolean;
       write?: boolean;
       execute?: boolean;
-      tasks?: boolean;
       search?: boolean;
       grep?: boolean;
-    } = { read: true, write: true, execute: true, tasks: true, grep: true }
+    } = { read: true, write: true, execute: true, grep: true }
   ): this {
     const selected = defaultToolsFromPermissions(permissions);
     this.explicitTools = { ...this.explicitTools, ...selected };
@@ -237,17 +233,10 @@ export class AgentBuilder {
     return this;
   }
 
-  TodoStore(store: TodoStore): this {
-    this.config.todoStore = store;
-    return this;
-  }
-
   Policy(policy: AgentPolicy): this {
     this.config.policy = policy;
     return this;
   }
-
-
 
   private finalizeTools() {
     if (this.toolsFinalized) return;

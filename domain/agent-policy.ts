@@ -22,10 +22,8 @@ export interface AgentPolicy {
   deniedToolReason?: string;
   /** Buffer text.delta until a text-only reply is accepted (e.g. plan code-dump gate). */
   bufferTextUntilAccepted?: boolean;
-  /** Per-tool success cap within a single user turn (e.g. { todo_write: 1 }). */
+  /** Per-tool success cap within a single user turn (e.g. { write_file: 1 }). */
   perTurnToolLimits?: Record<string, number>;
-  /** When true, continue the loop while open todos remain. Default false. */
-  enforceOpenTodos?: boolean;
   /** Text-only reply gates evaluated in order before accepting a final answer. */
   responseGates?: ResponseGate[];
 }
@@ -33,7 +31,6 @@ export interface AgentPolicy {
 export const DEFAULT_AGENT_POLICY: AgentPolicy = {
   id: 'default',
   allowedTools: 'all',
-  enforceOpenTodos: true,
 };
 
 export function resolvePolicyTools(

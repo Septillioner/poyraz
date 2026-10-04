@@ -62,7 +62,7 @@ Optional `presentation` drives labels/icons and arg/result summaries in a host U
 
 Optional `meta`:
 
-- `category`: `file` \| `shell` \| `memory` \| `planning` \| `network`
+- `category`: `file` \| `shell` \| `memory` \| `network`
 - `destructive` / `requiresApproval` — hints for your host UI
 
 ## Provider schemas

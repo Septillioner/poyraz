@@ -92,11 +92,9 @@ function policyForEvalMode(mode: NonNullable<EvalScenario['mode']>): AgentPolicy
   if (mode === 'plan') {
     return {
       id: 'plan',
-      allowedTools: ['read_file', 'list_dir', 'glob_file_search', 'grep', 'todo_write'],
+      allowedTools: ['read_file', 'list_dir', 'glob_file_search', 'grep'],
       hardBlockDeniedTools: true,
       deniedToolReason: DENIED_READ_ONLY,
-      perTurnToolLimits: { todo_write: 1 },
-      enforceOpenTodos: false,
     };
   }
   if (mode === 'ask') {
@@ -105,7 +103,6 @@ function policyForEvalMode(mode: NonNullable<EvalScenario['mode']>): AgentPolicy
       allowedTools: ['read_file', 'list_dir', 'glob_file_search', 'grep'],
       hardBlockDeniedTools: true,
       deniedToolReason: DENIED_READ_ONLY,
-      enforceOpenTodos: false,
     };
   }
   if (mode === 'chat') {
@@ -114,13 +111,11 @@ function policyForEvalMode(mode: NonNullable<EvalScenario['mode']>): AgentPolicy
       allowedTools: [],
       hardBlockDeniedTools: true,
       deniedToolReason: DENIED_READ_ONLY,
-      enforceOpenTodos: false,
     };
   }
   return {
     id: 'agent',
     allowedTools: 'all',
-    enforceOpenTodos: true,
   };
 }
 
@@ -255,7 +250,7 @@ async function runScenario(scenario: EvalScenario, model: string): Promise<Scena
       .Provider(provider)
       .WithModelProfile(profile)
       .ApiKey(apiKey)
-      .DefaultSystemTools({ read: true, write: true, execute: false, tasks: true, grep: true })
+      .DefaultSystemTools({ read: true, write: true, execute: false, grep: true })
       .RoutingPolicy({ maxToolRounds: 15, repeatCallLimit: 3, deterministicMode: true });
 
     if (scenario.mode) {

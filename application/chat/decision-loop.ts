@@ -3,7 +3,6 @@ import type { ChatMessage, LLMProvider, ReasoningConfig, ServiceTier, TokenUsage
 import type { AgentStreamEvent } from '../../domain/events.js';
 import { rateLimitStreamEvent } from '../../domain/events.js';
 import type { AgentPolicy } from '../../domain/agent-policy.js';
-import type { TodoSnapshot } from '../../domain/task.js';
 import { logger } from '../../shared/logger.js';
 import { assertNotAborted, ChatAbortedError } from '../../shared/chat-aborted.js';
 import { toolRegistry } from '../../tools/core/registry.js';
@@ -12,20 +11,13 @@ import type { ToolPolicyGuard } from './tool-policy.js';
 import { tryParseToolError } from './tool-errors.js';
 import { executeToolCall, parseRawToolArgs } from './tool-execution.js';
 import type { ToolDefinition } from '../../tools/core/types.js';
-import {
-  TODO_CONTINUATION_BUDGET,
-  buildAgentSoftCircuitNotice,
-  buildTodoBudgetExhaustedMessage,
-  buildTodoContinuationNotice,
-} from './todo-completion-gate.js';
 export const CONSECUTIVE_SAME_TOOL_LIMIT = 3;
-export const TODO_WRITE_CONSECUTIVE_LIMIT = 2;
 export const CONSECUTIVE_SAME_ERROR_LIMIT = 2;
 
 // Tools that mutate the workspace. A round that runs one of these made real
 // progress, so it should not count toward the read-only "same tool loop"
 // breaker. In read-only modes (plan/ask) none of these are available, so the
-// breaker keeps stopping unproductive read/todo loops early.
+// breaker keeps stopping unproductive read loops early.
 const PROGRESS_TOOLS = new Set(['edit_file', 'delete_file', 'run_terminal_cmd']);
 
 function isProgressTool(toolName: string): boolean {
@@ -66,9 +58,6 @@ export interface DecisionLoopHandlers {
 
   getPromptCacheKey?: () => string | undefined;
   signal?: AbortSignal;
-  /** Agent-mode completion gate: current todo snapshot for this session. */
-  getTodoSnapshot?: () => Promise<TodoSnapshot>;
-
 }
 
 function parseToolCallArgs(rawArgs: unknown): Record<string, unknown> {
@@ -81,14 +70,28 @@ function parseToolCallArgs(rawArgs: unknown): Record<string, unknown> {
   return {};
 }
 
-function getConsecutiveSameToolLimit(toolName: string): number {
-  return toolName === 'todo_write' ? TODO_WRITE_CONSECUTIVE_LIMIT : CONSECUTIVE_SAME_TOOL_LIMIT;
-}
-
 function buildCircuitBreakerNotice(toolName: string, count: number): string {
   return (
     `NOTICE: '${toolName}' was called ${count} times in a row without progress. ` +
     'Stop calling tools. Respond to the user in plain text with your findings or ask what they want next.'
+  );
+}
+
+function buildAgentSoftCircuitNotice(toolName: string, kind: 'repeat' | 'error'): string {
+  if (kind === 'error') {
+    return (
+      `<system_reminder>\n` +
+      `NOTICE: '${toolName}' returned the same error twice. Do not retry the identical call. ` +
+      `Try a different approach or gather more context with other tools before trying again.\n` +
+      `</system_reminder>`
+    );
+  }
+
+  return (
+    `<system_reminder>\n` +
+    `NOTICE: '${toolName}' was called repeatedly without progress. ` +
+    `Stop looping that tool. Switch approach or use other tools to make progress.\n` +
+    `</system_reminder>`
   );
 }
 
@@ -149,7 +152,6 @@ export async function runDecisionLoop(
   let lastErrorKey: string | undefined;
   let consecutiveSameError = 0;
   let lastUsage: TokenUsage | undefined;
-  let todoContinuationCount = 0;
   const gateRetries = new Map<number, number>();
 
   const isToolLoopBlocked = () => circuitBreakerNoticeSent;
@@ -244,30 +246,6 @@ export async function runDecisionLoop(
             handlers.addMessage({ role: 'assistant', content: sanitized });
             flushTextDelta(handlers, sanitized);
             return { content: sanitized, usage: response.usage ?? lastUsage };
-          }
-        }
-
-        if (deps.agentPolicy.enforceOpenTodos && handlers.getTodoSnapshot) {
-          const snapshot = await handlers.getTodoSnapshot();
-          if (!snapshot.allTerminal && snapshot.open.length > 0) {
-            if (todoContinuationCount >= TODO_CONTINUATION_BUDGET) {
-              const exhausted = buildTodoBudgetExhaustedMessage(snapshot);
-              logger.warn('Todo continuation budget exhausted', {
-                open: snapshot.open.length,
-                todoContinuationCount,
-              });
-              handlers.addMessage({ role: 'assistant', content: exhausted });
-              return { content: exhausted, usage: response.usage ?? lastUsage };
-            }
-
-            todoContinuationCount++;
-            const notice = buildTodoContinuationNotice(snapshot);
-            logger.info('Todo completion gate: continuing', {
-              open: snapshot.open.length,
-              todoContinuationCount,
-            });
-            handlers.addMessage({ role: 'user', content: notice });
-            continue;
           }
         }
 
@@ -382,8 +360,7 @@ export async function runDecisionLoop(
         }
       }
 
-      const limit = getConsecutiveSameToolLimit(roundToolName);
-      if (consecutiveSameTool >= limit) {
+      if (consecutiveSameTool >= CONSECUTIVE_SAME_TOOL_LIMIT) {
         logger.warn('Circuit breaker triggered', {
           toolName: roundToolName,
           consecutiveSameTool,
@@ -401,16 +378,6 @@ export async function runDecisionLoop(
           lastRoundToolName = undefined;
           consecutiveSameTool = 0;
         }
-      }
-    }
-
-    if (deps.agentPolicy.enforceOpenTodos && handlers.getTodoSnapshot) {
-      const snapshot = await handlers.getTodoSnapshot();
-      if (!snapshot.allTerminal && snapshot.open.length > 0) {
-        const exhausted = buildTodoBudgetExhaustedMessage(snapshot);
-        logger.warn(exhausted);
-        handlers.addMessage({ role: 'assistant', content: exhausted });
-        return { content: exhausted, usage: lastUsage };
       }
     }
 

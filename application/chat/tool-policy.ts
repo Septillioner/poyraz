@@ -5,7 +5,7 @@ export interface ToolRoutingPolicy {
   deniedTools?: string[];
   /** Reason returned when a tool is in deniedTools. */
   deniedToolReason?: string;
-  /** Per-tool success cap within a single user turn (e.g. { todo_write: 1 }). */
+  /** Per-tool success cap within a single user turn (e.g. { write_file: 1 }). */
   perTurnToolLimits?: Record<string, number>;
 }
 

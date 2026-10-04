@@ -5,14 +5,12 @@
   "toolPresets": [
     "filesystem",
     "shell",
-    "planning",
     "search"
   ],
   "defaultTools": {
     "read": true,
     "write": true,
     "execute": true,
-    "tasks": true,
     "grep": true
   },
   "contextLimit": 1000,

@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { logger } from '../../shared/logger.js';
 import type { AgentError } from '../../domain/llm.js';
-import type { TodoStore } from '../../domain/todo-store.js';
 
 export interface LastReadFileState {
   path: string;
@@ -17,14 +16,12 @@ export interface ToolContext {
   sessionId?: string;
   abortSignal?: AbortSignal;
   lastReadFile?: LastReadFileState;
-  todoStore?: TodoStore;
 }
 
 export type ToolCategory =
   | 'file'
   | 'shell'
   | 'memory'
-  | 'planning'
   | 'network';
 
 export interface ToolMeta {

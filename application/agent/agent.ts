@@ -37,9 +37,6 @@ import {
   resolvePolicyTools,
   type AgentPolicy,
 } from '../../domain/agent-policy.js';
-import type { TodoStore } from '../../domain/todo-store.js';
-import { createInMemoryTodoStore } from '../../infrastructure/persistence/in-memory-todo-store.js';
-import type { TodoSnapshot } from '../../domain/task.js';
 
 export type { AgentConfig };
 
@@ -54,7 +51,6 @@ export class Agent {
   private cachedToolSchemas: any[] = [];
   private policyConfig: ToolRoutingPolicy;
   private policy: AgentPolicy;
-  private todoStore: TodoStore;
   private context = createMessageContext({});
   private stats = createTokenStats();
   /** Usage of the most recent model request; what currently occupies the window. */
@@ -76,7 +72,6 @@ export class Agent {
       ...(config.options || {}),
     };
     this.policy = config.policy ?? { ...DEFAULT_AGENT_POLICY };
-    this.todoStore = config.todoStore ?? createInMemoryTodoStore();
     this.policyConfig = {
       maxToolRounds: resolveMaxToolRounds(config),
       repeatCallLimit: resolveRepeatCallLimit(config),
@@ -298,14 +293,6 @@ export class Agent {
     return this.sessionId;
   }
 
-  async getTodoSnapshot(): Promise<TodoSnapshot> {
-    return this.todoStore.getSnapshot(this.sessionId);
-  }
-
-  getCachedTodoSnapshot(): TodoSnapshot | null {
-    return this.todoStore.getCachedSnapshot(this.sessionId);
-  }
-
   setChatLogSource(source: ChatDebugLogSource) {
     this.chatLogSource = source;
   }
@@ -380,7 +367,6 @@ export class Agent {
           buildToolContext: () => this.buildToolContext(),
           getPromptCacheKey: () => this.getPromptCacheKey(),
           signal: handlers?.signal,
-          getTodoSnapshot: () => this.getTodoSnapshot(),
         }
       );
 
@@ -420,7 +406,6 @@ export class Agent {
     this.toolContext.logger = logger;
     this.toolContext.sessionId = this.sessionId;
     this.toolContext.abortSignal = this.activeAbortSignal;
-    this.toolContext.todoStore = this.todoStore;
     return this.toolContext;
   }
 }

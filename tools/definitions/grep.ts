@@ -92,7 +92,7 @@ export const grepToolDefinitions = [
       'Respects .gitignore. Results are capped for responsiveness. ' +
       'Use head_limit (not "limit") to cap output lines. ' +
       'Examples: { "pattern": "buildSystemPrompt", "path": "poyraz" }; ' +
-      '{ "pattern": "todo_write", "glob": "*.ts", "head_limit": 20, "-A": 2 }.',
+      '{ "pattern": "buildSystemPrompt", "glob": "*.ts", "head_limit": 20, "-A": 2 }.',
     inputSchema: grepSchema,
     execute: (args, _ctx) => grep(args),
     presentation: withPresentation('grep'),

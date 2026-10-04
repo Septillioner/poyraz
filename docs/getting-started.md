@@ -22,7 +22,7 @@ const agent = new AgentBuilder()
   .Name('demo')
   .WithModelProfile(profile)
   .ApiKey(apiKey)
-  .WithPresets('filesystem', 'shell', 'search', 'planning')
+  .WithPresets('filesystem', 'shell', 'search')
   .Build();
 
 await agent.init();
@@ -31,7 +31,7 @@ const { content } = await agent.chat('List files in the current directory.');
 console.log(content);
 ```
 
-The library does not load `.env` files. Pass keys (and optional `TodoStore`, `AgentPolicy`, MCP server defs) from your host.
+The library does not load `.env` files. Pass keys (and optional `AgentPolicy`, MCP server defs) from your host.
 
 ## Next steps
 

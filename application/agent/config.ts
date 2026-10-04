@@ -1,6 +1,5 @@
 import type { LLMProvider, ReasoningConfig, ServiceTier } from '../../domain/llm.js';
 import type { AgentPolicy } from '../../domain/agent-policy.js';
-import type { TodoStore } from '../../domain/todo-store.js';
 import type { ToolPresetName } from '../../tools/core/registry.js';
 import type { LogLevel } from '../../shared/logger.js';
 import type { ToolDefinition } from '../../tools/core/types.js';
@@ -38,12 +37,8 @@ export interface AgentConfig {
   reasoning?: ReasoningConfig;
   serviceTier?: ServiceTier;
   routingPolicy?: Partial<ToolRoutingPolicy>;
-  /** Injected todo persistence; defaults to in-memory when omitted. */
-  todoStore?: TodoStore;
   /** Active behavioral policy (tool allow-list, gates). */
   policy?: AgentPolicy;
-
-
 }
 
 export interface AgentTemplate {
@@ -60,7 +55,6 @@ export interface AgentTemplate {
     read?: boolean;
     write?: boolean;
     execute?: boolean;
-    tasks?: boolean;
     search?: boolean;
     grep?: boolean;
   };
