@@ -14,6 +14,16 @@ import type { ToolDefinition } from '../../tools/core/types.js';
 export const CONSECUTIVE_SAME_TOOL_LIMIT = 3;
 export const CONSECUTIVE_SAME_ERROR_LIMIT = 2;
 
+/**
+ * Same-tool loop breaker. Off for now: it fired on legitimate work (host tools
+ * arrive MCP-prefixed, so the read-only progress check never matched) and cut a
+ * turn that was making real progress. Mode policy still blocks mutating tools
+ * outside agent mode, `maxToolRounds` still bounds a turn, and the error
+ * circuit breaker below still stops identical failures. Flip to true to restore
+ * the "same tool N times in a row" NOTICE.
+ */
+export const SAME_TOOL_LOOP_BREAKER_ENABLED = false;
+
 // Tools that mutate the workspace. A round that runs one of these made real
 // progress, so it should not count toward the read-only "same tool loop"
 // breaker. In read-only modes (plan/ask) none of these are available, so the
@@ -360,7 +370,7 @@ export async function runDecisionLoop(
         }
       }
 
-      if (consecutiveSameTool >= CONSECUTIVE_SAME_TOOL_LIMIT) {
+      if (SAME_TOOL_LOOP_BREAKER_ENABLED && consecutiveSameTool >= CONSECUTIVE_SAME_TOOL_LIMIT) {
         logger.warn('Circuit breaker triggered', {
           toolName: roundToolName,
           consecutiveSameTool,

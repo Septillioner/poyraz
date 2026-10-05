@@ -2,7 +2,8 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { runDecisionLoop, CONSECUTIVE_SAME_ERROR_LIMIT } from '../../application/chat/decision-loop.js';
+import { z } from 'zod';
+import { runDecisionLoop, CONSECUTIVE_SAME_ERROR_LIMIT, SAME_TOOL_LOOP_BREAKER_ENABLED } from '../../application/chat/decision-loop.js';
 import { createToolPolicyGuard } from '../../application/chat/tool-policy.js';
 import { createMessageContext } from '../../application/context/message-context.js';
 import {
@@ -176,5 +177,38 @@ describe('decision-loop tool error recovery', () => {
     expect(assistants.length).toBeGreaterThanOrEqual(3);
     expect(assistants[2].tool_calls).toBeUndefined();
     expect(assistants[2].content).toBe('Final text only.');
+  });
+
+  it('never strips tool calls for a repeated read-only tool while the breaker is off', async () => {
+    toolDefs.ping = defineTool({
+      name: 'ping',
+      description: 'always succeeds',
+      inputSchema: z.object({}),
+      execute: async () => ({ content: 'pong' }),
+    });
+
+    const llm = mockLLM([
+      { tool_calls: [toolCall('ping', {}, 'p1')] },
+      { tool_calls: [toolCall('ping', {}, 'p2')] },
+      { tool_calls: [toolCall('ping', {}, 'p3')] },
+      { tool_calls: [toolCall('ping', {}, 'p4')] },
+      { content: 'Done asking.' },
+    ]);
+
+    const { messages } = await runLoop(llm, [], HARD_BLOCK_POLICY);
+
+    expect(SAME_TOOL_LOOP_BREAKER_ENABLED).toBe(false);
+
+    const sameToolNotices = messages.filter(
+      (m) => m.role === 'user' && m.content.includes('times in a row')
+    );
+    expect(sameToolNotices).toHaveLength(0);
+
+    const assistants = messages.filter((m) => m.role === 'assistant');
+    expect(assistants).toHaveLength(5);
+    // The 4th repeated round keeps its tool_calls: nothing blocked the loop.
+    expect(assistants[3].tool_calls).toHaveLength(1);
+    expect(assistants[4].tool_calls).toBeUndefined();
+    expect(assistants[4].content).toBe('Done asking.');
   });
 });
