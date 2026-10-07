@@ -61,9 +61,13 @@ export function bridgeMcpTool(serverId: string, client: Client, tool: McpToolInf
     description: tool.description || `MCP tool "${tool.name}" from server "${serverId}".`,
     inputSchema: jsonSchemaToLooseZod(tool.inputSchema),
     parametersJsonSchema: tool.inputSchema,
-    execute: async (args): Promise<ToolResult> => {
+    execute: async (args, context): Promise<ToolResult> => {
       try {
-        const result = await client.callTool({ name: tool.name, arguments: args });
+        const result = await client.callTool(
+          { name: tool.name, arguments: args },
+          undefined,
+          context.abortSignal ? { signal: context.abortSignal } : undefined,
+        );
         return {
           content: formatToolContent((result as any).content),
           isError: Boolean((result as any).isError),
