@@ -20,6 +20,7 @@ import {
   toResponsesTools,
 } from './openai-responses.js';
 import { isRateLimitError, withRateLimitRetry } from './rate-limit.js';
+import { sanitizeToolPairing } from './tool-pairing.js';
 
 export class OllamaProvider implements LLMProvider {
   private ollama: Ollama;
@@ -31,7 +32,7 @@ export class OllamaProvider implements LLMProvider {
   async chat(options: ChatOptions, onToken?: (token: string) => void): Promise<ChatResponse> {
     const response = await this.ollama.chat({
       model: options.model,
-      messages: options.messages as any,
+      messages: sanitizeToolPairing(options.messages) as any,
       options: options.options,
       tools: options.tools,
       stream: true,
@@ -199,7 +200,7 @@ export class OpenAIProvider implements LLMProvider {
     onToken?: (token: string) => void,
     onReasoning?: (delta: string) => void
   ): Promise<ChatResponse> {
-    const { instructions, input } = toResponsesInput(options.messages);
+    const { instructions, input } = toResponsesInput(sanitizeToolPairing(options.messages));
     const tools = toResponsesTools(options.tools);
 
     const requestBody: Record<string, unknown> = {
@@ -323,7 +324,7 @@ export class OpenAIProvider implements LLMProvider {
   ): Promise<ChatResponse> {
     const requestBody: Record<string, unknown> = {
       model: options.model,
-      messages: options.messages.map((msg) => ({
+      messages: sanitizeToolPairing(options.messages).map((msg) => ({
         role: msg.role,
         content: msg.content,
         tool_call_id: msg.tool_call_id,

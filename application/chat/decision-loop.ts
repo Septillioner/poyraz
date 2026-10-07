@@ -24,6 +24,20 @@ export const CONSECUTIVE_SAME_ERROR_LIMIT = 2;
  */
 export const SAME_TOOL_LOOP_BREAKER_ENABLED = false;
 
+/**
+ * Same-error circuit breaker. Off for now: the hard-block NOTICE inserted a user
+ * message mid-history, the round that followed stripped `tool_calls` while keeping
+ * `providerMeta.openai.outputItems`, and the next request replayed those
+ * `function_call` items with no output — the provider answered
+ * `400 No tool output found for function call`. The failures it guarded against are
+ * already bounded by `repeatCallLimit` (identical tool+args), `maxToolRounds` and
+ * the mode policy, so it buys little and breaks the transcript.
+ *
+ * Re-enable only once `sanitizeToolPairing` is in place AND the hard-block path is
+ * replaced by `buildAgentSoftCircuitNotice` (which never touches tool_calls).
+ */
+export const ERROR_CIRCUIT_BREAKER_ENABLED: boolean = false;
+
 // Tools that mutate the workspace. A round that runs one of these made real
 // progress, so it should not count toward the read-only "same tool loop"
 // breaker. In read-only modes (plan/ask) none of these are available, so the
@@ -222,11 +236,13 @@ export async function runDecisionLoop(
 
       const toolCalls = isToolLoopBlocked() ? undefined : response.tool_calls;
 
+      // Dropping `tool_calls` without dropping the raw provider output would leave
+      // `function_call` items the next request replays with nothing to answer them.
       handlers.addMessage({
         role: 'assistant',
         content: response.content,
         tool_calls: toolCalls,
-        providerMeta: response.providerMeta,
+        providerMeta: toolCalls ? response.providerMeta : undefined,
       });
 
       if (!toolCalls?.length) {
@@ -335,7 +351,7 @@ export async function runDecisionLoop(
             lastErrorKey = errorKey;
             consecutiveSameError = 1;
           }
-          if (consecutiveSameError >= CONSECUTIVE_SAME_ERROR_LIMIT) {
+          if (ERROR_CIRCUIT_BREAKER_ENABLED && consecutiveSameError >= CONSECUTIVE_SAME_ERROR_LIMIT) {
             errorCircuitToolName = toolName;
           }
         } else {
@@ -348,7 +364,7 @@ export async function runDecisionLoop(
       // round has a matching tool response. Inserting a user message between an
       // assistant tool_calls message and its tool responses corrupts the
       // provider history (OpenAI rejects orphaned tool_call_ids with a 400).
-      if (errorCircuitToolName) {
+      if (ERROR_CIRCUIT_BREAKER_ENABLED && errorCircuitToolName) {
         logger.warn('Error circuit breaker triggered', {
           toolName: errorCircuitToolName,
           consecutiveSameError,

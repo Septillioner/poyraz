@@ -1,5 +1,6 @@
 import type { Content, FunctionDeclaration, Part, Tool } from '@google/genai';
 import type { ChatMessage } from '../../domain/llm.js';
+import { sanitizeToolPairing } from './tool-pairing.js';
 
 export interface GeminiRequestPayload {
   systemInstruction?: string;
@@ -142,7 +143,7 @@ export function buildGeminiRequest(
   messages: ChatMessage[],
   openAiTools?: unknown[]
 ): GeminiRequestPayload {
-  const { systemInstruction, contents } = toGeminiContents(messages);
+  const { systemInstruction, contents } = toGeminiContents(sanitizeToolPairing(messages));
   return {
     systemInstruction,
     contents,

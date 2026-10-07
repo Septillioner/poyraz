@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { runDecisionLoop, CONSECUTIVE_SAME_ERROR_LIMIT, SAME_TOOL_LOOP_BREAKER_ENABLED } from '../../application/chat/decision-loop.js';
+import { runDecisionLoop, CONSECUTIVE_SAME_ERROR_LIMIT, ERROR_CIRCUIT_BREAKER_ENABLED, SAME_TOOL_LOOP_BREAKER_ENABLED } from '../../application/chat/decision-loop.js';
 import { createToolPolicyGuard } from '../../application/chat/tool-policy.js';
 import { createMessageContext } from '../../application/context/message-context.js';
 import {
@@ -114,7 +114,7 @@ describe('decision-loop tool error recovery', () => {
     expect(containsRepairFor(messages, 'edit_file')).toBe(true);
   });
 
-  it('injects NOTICE after same error twice and blocks further tool calls', async () => {
+  it('does not inject a NOTICE when the same error repeats while the breaker is off', async () => {
     const llm = mockLLM([
       { tool_calls: [toolCall('noop', { target_file: 'x', code_edit: 'a' }, 'c1')] },
       { tool_calls: [toolCall('noop', { target_file: 'x', code_edit: 'a' }, 'c2')] },
@@ -125,21 +125,8 @@ describe('decision-loop tool error recovery', () => {
     const { messages } = await runLoop(llm, [], HARD_BLOCK_POLICY);
 
     const notices = messages.filter((m) => m.role === 'user' && m.content.includes('NOTICE:'));
-    expect(notices.length).toBeGreaterThanOrEqual(1);
-    expect(notices[0].content).toContain('same error twice');
-
-    const lastAssistantWithTools = [...messages]
-      .reverse()
-      .find((m) => m.role === 'assistant' && m.tool_calls !== undefined);
-    if (lastAssistantWithTools) {
-      const idx = messages.indexOf(lastAssistantWithTools);
-      const afterNotice = messages.slice(idx);
-      const blockedRound = afterNotice.find(
-        (m) => m.role === 'assistant' && m.content === 'Giving up in text.'
-      );
-      expect(blockedRound?.tool_calls).toBeUndefined();
-    }
-
+    expect(notices).toHaveLength(0);
+    expect(ERROR_CIRCUIT_BREAKER_ENABLED).toBe(false);
     expect(CONSECUTIVE_SAME_ERROR_LIMIT).toBe(2);
   });
 
@@ -161,22 +148,22 @@ describe('decision-loop tool error recovery', () => {
     expect(notices).toHaveLength(0);
   });
 
-  it('strips tool_calls from assistant message when circuit breaker is active', async () => {
+  it('never strips tool_calls from an assistant round while the breaker is off', async () => {
     const llm = mockLLM([
       { tool_calls: [toolCall('noop', { target_file: 'a', code_edit: 'b' }, 'c1')] },
       { tool_calls: [toolCall('noop', { target_file: 'a', code_edit: 'b' }, 'c2')] },
-      {
-        tool_calls: [toolCall('noop', { target_file: 'a', code_edit: 'b' }, 'c3')],
-        content: 'Final text only.',
-      },
+      { content: 'Final text only.' },
     ]);
 
     const { messages } = await runLoop(llm, [], HARD_BLOCK_POLICY);
 
     const assistants = messages.filter((m) => m.role === 'assistant');
-    expect(assistants.length).toBeGreaterThanOrEqual(3);
+    expect(assistants).toHaveLength(3);
+    expect(assistants[0].tool_calls).toHaveLength(1);
+    expect(assistants[1].tool_calls).toHaveLength(1);
     expect(assistants[2].tool_calls).toBeUndefined();
     expect(assistants[2].content).toBe('Final text only.');
+    expect(ERROR_CIRCUIT_BREAKER_ENABLED).toBe(false);
   });
 
   it('never strips tool calls for a repeated read-only tool while the breaker is off', async () => {
