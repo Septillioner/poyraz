@@ -2,6 +2,18 @@ export type GateVerdict =
   | { kind: 'accept' }
   | { kind: 'retry'; notice: string };
 
+/**
+ * Same-error circuit breaker mode.
+ * - `'off'` (default): the streak is never counted, no NOTICE is injected, and no
+ *   round is ever marked blocked. Choose this unless you need the loop breaker.
+ * - `'soft'`: streak is counted and a `<system_reminder>` NOTICE is injected. It never
+ *   touches `tool_calls`, so the saved history stays provider-valid.
+ * - `'hard'`: the legacy hard path. It marks the loop blocked, which drops `tool_calls`
+ *   from later rounds while `sanitizeToolPairing` still has to repair the request payload.
+ *   Prefer `'soft'`.
+ */
+export type ErrorBreakerMode = 'off' | 'soft' | 'hard';
+
 export interface ResponseGate {
   /** Max retries after a retry verdict before accepting or calling onExhausted. */
   maxRetries: number;
@@ -18,6 +30,8 @@ export interface AgentPolicy {
   allowedTools: 'all' | string[];
   /** When true, denied tools abort the turn (hard block). Default false. */
   hardBlockDeniedTools?: boolean;
+  /** Same-error circuit breaker mode. `undefined` means `'off'`. */
+  errorBreaker?: ErrorBreakerMode;
   /** Reason returned when a tool is denied by allowedTools. */
   deniedToolReason?: string;
   /** Buffer text.delta until a text-only reply is accepted (e.g. plan code-dump gate). */

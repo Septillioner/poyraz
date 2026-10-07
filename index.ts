@@ -11,6 +11,7 @@ export {
   resolvePolicyDenied,
   resolvePolicyTools,
   type AgentPolicy,
+  type ErrorBreakerMode,
   type GateVerdict,
   type ResponseGate,
 } from './domain/agent-policy.js';

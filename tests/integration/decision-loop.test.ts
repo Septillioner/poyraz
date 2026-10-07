@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { runDecisionLoop, CONSECUTIVE_SAME_ERROR_LIMIT, ERROR_CIRCUIT_BREAKER_ENABLED, SAME_TOOL_LOOP_BREAKER_ENABLED } from '../../application/chat/decision-loop.js';
+import { runDecisionLoop, CONSECUTIVE_SAME_ERROR_LIMIT, ERROR_CIRCUIT_BREAKER_ENABLED, resolveErrorBreakerMode, SAME_TOOL_LOOP_BREAKER_ENABLED } from '../../application/chat/decision-loop.js';
 import { createToolPolicyGuard } from '../../application/chat/tool-policy.js';
 import { createMessageContext } from '../../application/context/message-context.js';
 import {
@@ -128,6 +128,61 @@ describe('decision-loop tool error recovery', () => {
     expect(notices).toHaveLength(0);
     expect(ERROR_CIRCUIT_BREAKER_ENABLED).toBe(false);
     expect(CONSECUTIVE_SAME_ERROR_LIMIT).toBe(2);
+  });
+
+  it('resolves the breaker mode from the host-owned policy', () => {
+    expect(resolveErrorBreakerMode(DEFAULT_AGENT_POLICY)).toBe('off');
+    expect(resolveErrorBreakerMode({ ...DEFAULT_AGENT_POLICY, errorBreaker: 'soft' })).toBe('soft');
+    expect(resolveErrorBreakerMode({ ...DEFAULT_AGENT_POLICY, errorBreaker: 'hard' })).toBe('hard');
+  });
+
+  it('injects a soft system_reminder NOTICE in soft mode without blocking rounds', async () => {
+    const llm = mockLLM([
+      { tool_calls: [toolCall('noop', { target_file: 'x', code_edit: 'a' }, 'c1')] },
+      { tool_calls: [toolCall('noop', { target_file: 'x', code_edit: 'a' }, 'c2')] },
+      { tool_calls: [toolCall('noop', { target_file: 'x', code_edit: 'a' }, 'c3')] },
+      { content: 'Giving up in text.' },
+    ]);
+
+    const { messages } = await runLoop(llm, [], {
+      ...HARD_BLOCK_POLICY,
+      errorBreaker: 'soft',
+    });
+
+    const notices = messages.filter((m) => m.role === 'user' && m.content.includes('NOTICE:'));
+    expect(notices.length).toBeGreaterThanOrEqual(1);
+    expect(notices[0].content).toContain('same error twice');
+    expect(notices[0].content).not.toContain('Stop retrying that tool call');
+
+    const assistants = messages.filter((m) => m.role === 'assistant');
+    expect(assistants).toHaveLength(4);
+    expect(assistants[2].tool_calls).toHaveLength(1);
+    expect(assistants[3].tool_calls).toBeUndefined();
+    expect(assistants[3].content).toBe('Giving up in text.');
+  });
+
+  it('takes the hard path in hard mode with hard-block policy', async () => {
+    const llm = mockLLM([
+      { tool_calls: [toolCall('noop', { target_file: 'x', code_edit: 'a' }, 'c1')] },
+      { tool_calls: [toolCall('noop', { target_file: 'x', code_edit: 'a' }, 'c2')] },
+      { content: 'Giving up in text.' },
+    ]);
+
+    const { messages } = await runLoop(llm, [], {
+      ...HARD_BLOCK_POLICY,
+      errorBreaker: 'hard',
+    });
+
+    const notices = messages.filter((m) => m.role === 'user' && m.content.includes('NOTICE:'));
+    expect(notices.length).toBeGreaterThanOrEqual(1);
+    expect(notices[0].content).toContain('Stop retrying that tool call');
+
+    const assistants = messages.filter((m) => m.role === 'assistant');
+    expect(assistants).toHaveLength(3);
+    expect(assistants[0].tool_calls).toHaveLength(1);
+    expect(assistants[1].tool_calls).toHaveLength(1);
+    expect(assistants[2].tool_calls).toBeUndefined();
+    expect(assistants[2].content).toBe('Giving up in text.');
   });
 
   it('resets error streak after successful tool call', async () => {

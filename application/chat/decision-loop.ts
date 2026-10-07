@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import type { ChatMessage, LLMProvider, ReasoningConfig, ServiceTier, TokenUsage } from '../../domain/llm.js';
 import type { AgentStreamEvent } from '../../domain/events.js';
 import { rateLimitStreamEvent } from '../../domain/events.js';
-import type { AgentPolicy } from '../../domain/agent-policy.js';
+import type { AgentPolicy, ErrorBreakerMode } from '../../domain/agent-policy.js';
 import { logger } from '../../shared/logger.js';
 import { assertNotAborted, ChatAbortedError } from '../../shared/chat-aborted.js';
 import { toolRegistry } from '../../tools/core/registry.js';
@@ -37,6 +37,17 @@ export const SAME_TOOL_LOOP_BREAKER_ENABLED = false;
  * replaced by `buildAgentSoftCircuitNotice` (which never touches tool_calls).
  */
 export const ERROR_CIRCUIT_BREAKER_ENABLED: boolean = false;
+
+/**
+ * Host-owned configuration for the same-error circuit breaker. The module constant
+ * above is the legacy in-repo default for callers that pass no policy (kept for
+ * backwards compatibility); `AgentPolicy.errorBreaker` wins whenever it is set, and
+ * an unset policy field means `'off'`.
+ */
+export function resolveErrorBreakerMode(agentPolicy: AgentPolicy): ErrorBreakerMode {
+  if (agentPolicy.errorBreaker) return agentPolicy.errorBreaker;
+  return ERROR_CIRCUIT_BREAKER_ENABLED ? 'hard' : 'off';
+}
 
 // Tools that mutate the workspace. A round that runs one of these made real
 // progress, so it should not count toward the read-only "same tool loop"
@@ -180,6 +191,7 @@ export async function runDecisionLoop(
 
   const isToolLoopBlocked = () => circuitBreakerNoticeSent;
   const bufferTextUntilAccepted = Boolean(deps.agentPolicy.bufferTextUntilAccepted);
+  const errorBreakerMode = resolveErrorBreakerMode(deps.agentPolicy);
 
   try {
     outer: while (round < deps.policy.maxToolRounds) {
@@ -351,7 +363,7 @@ export async function runDecisionLoop(
             lastErrorKey = errorKey;
             consecutiveSameError = 1;
           }
-          if (ERROR_CIRCUIT_BREAKER_ENABLED && consecutiveSameError >= CONSECUTIVE_SAME_ERROR_LIMIT) {
+          if (errorBreakerMode !== 'off' && consecutiveSameError >= CONSECUTIVE_SAME_ERROR_LIMIT) {
             errorCircuitToolName = toolName;
           }
         } else {
@@ -364,13 +376,13 @@ export async function runDecisionLoop(
       // round has a matching tool response. Inserting a user message between an
       // assistant tool_calls message and its tool responses corrupts the
       // provider history (OpenAI rejects orphaned tool_call_ids with a 400).
-      if (ERROR_CIRCUIT_BREAKER_ENABLED && errorCircuitToolName) {
+      if (errorBreakerMode !== 'off' && errorCircuitToolName) {
         logger.warn('Error circuit breaker triggered', {
           toolName: errorCircuitToolName,
           consecutiveSameError,
           policyId: deps.agentPolicy.id,
         });
-        if (shouldHardBlockTools(deps.agentPolicy)) {
+        if (errorBreakerMode === 'hard' && shouldHardBlockTools(deps.agentPolicy)) {
           handlers.addMessage({
             role: 'user',
             content: buildErrorCircuitNotice(errorCircuitToolName),
