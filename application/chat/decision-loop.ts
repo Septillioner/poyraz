@@ -90,6 +90,8 @@ export interface DecisionLoopHandlers {
   onEvent?: (event: AgentStreamEvent) => void;
   onUsage?: (usage: TokenUsage) => void;
   buildToolContext: () => ToolContext;
+  /** Token pressure hook, runs before each model request. Must keep tool_calls pairing intact. */
+  beforeRound?: () => Promise<void>;
 
   getPromptCacheKey?: () => string | undefined;
   signal?: AbortSignal;
@@ -198,7 +200,7 @@ export async function runDecisionLoop(
       round++;
       assertNotAborted(handlers.signal);
 
-
+      await handlers.beforeRound?.();
 
       handlers.onEvent?.({ type: 'lifecycle', phase: 'thinking' });
 

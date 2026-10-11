@@ -27,6 +27,10 @@ export interface AgentConfig {
   excludeTools?: string[];
   options?: Record<string, any>;
   contextLimit?: number;
+  /** Token window for token-based autosummary. Falls back to catalog value when omitted. */
+  contextWindowTokens?: number;
+  /** Occupancy ratio (0-1) that triggers token-based autosummary. Defaults to 0.8. */
+  summaryThresholdRatio?: number;
   autoSummary?: boolean;
   logLevel?: LogLevel;
   apiKey?: string;
@@ -62,6 +66,10 @@ export interface AgentTemplate {
   deepThinking?: boolean;
   options?: Record<string, any>;
   contextLimit?: number;
+  /** Token window for token-based autosummary. */
+  contextWindowTokens?: number;
+  /** Occupancy ratio (0-1) that triggers token-based autosummary. Defaults to 0.8. */
+  summaryThresholdRatio?: number;
   autoSummary?: boolean;
   logLevel?: LogLevel;
   remoteContextUrl?: string;

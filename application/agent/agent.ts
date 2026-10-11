@@ -16,7 +16,12 @@ import type { ToolContext } from '../../tools/core/types.js';
 import type { ToolDefinition } from '../../tools/core/types.js';
 import type { AgentStreamEvent, ChatHandlers } from '../../domain/events.js';
 import { createMessageContext } from '../context/message-context.js';
-import { applyContextManagement, summarizeHistory } from '../context/summarizer.js';
+import {
+  applyContextManagement,
+  normalizeSummaryThreshold,
+  shouldSummarizeByTokens,
+  summarizeHistory,
+} from '../context/summarizer.js';
 import { createTokenStats } from '../stats/token-stats.js';
 import { buildSystemPrompt, BuiltSystemPrompt } from '../prompt/system-prompt.js';
 import { createToolPolicyGuard, type ToolRoutingPolicy } from '../chat/tool-policy.js';
@@ -55,6 +60,7 @@ export class Agent {
   private stats = createTokenStats();
   /** Usage of the most recent model request; what currently occupies the window. */
   private lastRequestUsage?: TokenUsage;
+  private summarizingMidLoop = false;
   private sessionId?: string;
   private builtPrompt?: BuiltSystemPrompt;
   private historyLoaded = false;
@@ -326,6 +332,37 @@ export class Agent {
     await summarizeHistory(this.context, this.provider, this.model, handlers, this.config.serviceTier);
   }
 
+  private tokenPressureNow(): boolean {
+    const lastUsage = this.lastRequestUsage;
+    const promptTokens = lastUsage ? lastUsage.promptTokens : undefined;
+    return shouldSummarizeByTokens({
+      promptTokens,
+      contextWindowTokens: this.config.contextWindowTokens,
+      summaryThresholdRatio: normalizeSummaryThreshold(this.config.summaryThresholdRatio),
+    });
+  }
+
+  /**
+   * Token pressure check between tool rounds. Skips while a tool_calls pair is
+   * open (cutting there orphans tool_call_ids and the provider 400s) and while
+   * a summary is already running (the summary request itself must not recurse).
+   */
+  private async maybeSummarizeMidLoop(handlers?: ChatHandlers): Promise<void> {
+    if (!this.config.autoSummary) return;
+    if (this.summarizingMidLoop) return;
+    if (!this.tokenPressureNow()) return;
+    const messages = this.context.getMessages();
+    const last = messages.length > 0 ? messages[messages.length - 1] : undefined;
+    if (last?.role === 'assistant' && Array.isArray(last.tool_calls) && last.tool_calls.length > 0) return;
+    this.summarizingMidLoop = true;
+    try {
+      await this.summarize(handlers);
+      this.lastRequestUsage = undefined;
+    } finally {
+      this.summarizingMidLoop = false;
+    }
+  }
+
   async chat(userInput: string, handlers?: ChatHandlers): Promise<{ content: string; usage: TokenUsage; contextUsage?: TokenUsage }> {
     this.context.addMessage({ role: 'user', content: userInput });
     this.stats.resetCurrent();
@@ -365,6 +402,7 @@ export class Agent {
             this.stats.addUsage(usage);
           },
           buildToolContext: () => this.buildToolContext(),
+          beforeRound: () => this.maybeSummarizeMidLoop(handlers),
           getPromptCacheKey: () => this.getPromptCacheKey(),
           signal: handlers?.signal,
         }
@@ -374,7 +412,12 @@ export class Agent {
         this.context,
         this.config.autoSummary || false,
         handlers,
-        () => this.summarize(handlers)
+        () => this.summarize(handlers),
+        {
+          promptTokens: this.getContextUsage()?.promptTokens,
+          contextWindowTokens: this.config.contextWindowTokens,
+          summaryThresholdRatio: normalizeSummaryThreshold(this.config.summaryThresholdRatio),
+        }
       );
 
       result = { content: loopResult.content, usage: this.stats.getCurrent() };

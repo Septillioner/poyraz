@@ -9,6 +9,11 @@ import { LogLevel } from '../../shared/logger.js';
 import { isReasoningEffort, isServiceTier, type LLMProvider, type ReasoningConfig, type ServiceTier } from '../../domain/llm.js';
 import type { ToolRoutingPolicy } from '../chat/tool-policy.js';
 
+export const MIN_CONTEXT_WINDOW_TOKENS = 1000;
+export const DEFAULT_SUMMARY_THRESHOLD_RATIO = 0.8;
+const MIN_SUMMARY_THRESHOLD_RATIO = 0.5;
+const MAX_SUMMARY_THRESHOLD_RATIO = 0.95;
+
 function defaultToolsFromPermissions(permissions: {
   read?: boolean;
   write?: boolean;
@@ -108,6 +113,23 @@ export class AgentBuilder {
 
   ContextLimit(limit: number): this {
     this.config.contextLimit = limit;
+    return this;
+  }
+
+  ContextWindow(tokens: number): this {
+    if (typeof tokens === 'number' && Number.isFinite(tokens) && tokens >= MIN_CONTEXT_WINDOW_TOKENS) {
+      this.config.contextWindowTokens = Math.floor(tokens);
+    }
+    return this;
+  }
+
+  AutoSummaryThreshold(ratio: number): this {
+    if (typeof ratio === 'number' && Number.isFinite(ratio)) {
+      this.config.summaryThresholdRatio = Math.min(
+        MAX_SUMMARY_THRESHOLD_RATIO,
+        Math.max(MIN_SUMMARY_THRESHOLD_RATIO, ratio)
+      );
+    }
     return this;
   }
 
@@ -214,6 +236,8 @@ export class AgentBuilder {
     if (json.excludeTools?.length) this.WithoutTools(...json.excludeTools);
 
     if (json.contextLimit) this.ContextLimit(json.contextLimit);
+    if (json.contextWindowTokens) this.ContextWindow(json.contextWindowTokens);
+    if (json.summaryThresholdRatio !== undefined) this.AutoSummaryThreshold(json.summaryThresholdRatio);
     if (json.autoSummary !== undefined) this.AutoSummary(json.autoSummary);
     if (json.reasoning) this.Reasoning(json.reasoning);
     if (json.remoteContextUrl) this.RemoteContext(json.remoteContextUrl);

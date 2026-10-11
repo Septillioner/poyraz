@@ -6,6 +6,10 @@ import type { MessageContext } from './message-context.js';
 
 export const SUMMARY_MESSAGE_PREFIX = 'Önceki konuşmaların özeti:';
 
+export const DEFAULT_SUMMARY_THRESHOLD_RATIO = 0.8;
+const MIN_SUMMARY_THRESHOLD_RATIO = 0.5;
+const MAX_SUMMARY_THRESHOLD_RATIO = 0.95;
+
 const TOOL_RESULT_MAX_CHARS = 200;
 
 export function isSummaryMessage(message: ChatMessage): boolean {
@@ -42,17 +46,41 @@ function formatSummaryInput(messages: ChatMessage[]): string {
     .join('\n\n');
 }
 
+export function normalizeSummaryThreshold(ratio: number | undefined): number {
+  if (typeof ratio !== 'number' || !Number.isFinite(ratio)) return DEFAULT_SUMMARY_THRESHOLD_RATIO;
+  return Math.min(MAX_SUMMARY_THRESHOLD_RATIO, Math.max(MIN_SUMMARY_THRESHOLD_RATIO, ratio));
+}
+
+export interface TokenSummaryTrigger {
+  promptTokens?: number;
+  contextWindowTokens?: number;
+  summaryThresholdRatio?: number;
+}
+
+export function shouldSummarizeByTokens(trigger: TokenSummaryTrigger): boolean {
+  const promptTokens = trigger.promptTokens;
+  const window = trigger.contextWindowTokens;
+  if (typeof promptTokens !== 'number' || !Number.isFinite(promptTokens) || promptTokens <= 0) return false;
+  if (typeof window !== 'number' || !Number.isFinite(window) || window <= 0) return false;
+  return promptTokens >= window * normalizeSummaryThreshold(trigger.summaryThresholdRatio);
+}
+
 export async function applyContextManagement(
   context: MessageContext,
   autoSummary: boolean,
   handlers: ChatHandlers | undefined,
-  summarize: () => Promise<void>
+  summarize: () => Promise<void>,
+  tokenTrigger?: TokenSummaryTrigger
 ): Promise<void> {
-  if (!context.shouldManage()) return;
+  const tokenPressure = tokenTrigger ? shouldSummarizeByTokens(tokenTrigger) : false;
+  if (!tokenPressure && !context.shouldManage()) return;
 
   logger.debug('Context management triggered', {
     autoSummary,
     currentMessages: context.getMessages().length,
+    promptTokens: tokenTrigger?.promptTokens,
+    contextWindowTokens: tokenTrigger?.contextWindowTokens,
+    tokenPressure,
   });
 
   if (autoSummary) {
