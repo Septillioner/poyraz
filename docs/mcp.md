@@ -27,6 +27,8 @@ const tools = await mcpClientManager.connectAll(servers);
 agent.mergeExternalTools(tools);
 ```
 
+HTTP servers accept `ignoreCertificate: true` to skip TLS certificate verification for that one server only (self-signed or otherwise invalid certificates). It rides on a custom transport `fetch` built on `node:http(s)` with `rejectUnauthorized: false`, so every other connection keeps normal verification.
+
 `connectAll` disconnects existing connections, then connects every enabled entry. Disabled servers (`disabled: true`) are recorded as `disabled` without connecting.
 
 ## Tool names

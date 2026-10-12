@@ -5,6 +5,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { isMcpHttpServerDef, type McpServerDef } from '../../domain/mcp.js';
 import type { ToolDefinition } from '../../tools/core/types.js';
 import { bridgeMcpTool } from './mcp-tool-bridge.js';
+import { insecureFetch } from './insecure-fetch.js';
 
 export type McpConnectionStatus = 'connected' | 'error' | 'disabled';
 
@@ -31,6 +32,7 @@ function createTransport(def: McpServerDef): Transport {
   if (isMcpHttpServerDef(def)) {
     return new StreamableHTTPClientTransport(new URL(def.url), {
       requestInit: def.headers ? { headers: def.headers } : undefined,
+      fetch: def.ignoreCertificate ? insecureFetch : undefined,
     });
   }
   return new StdioClientTransport({
@@ -58,12 +60,9 @@ function listedTools(tools: { name?: string; description?: string }[]): McpListe
  * Unwrap it so `/mcp list` shows something actionable instead of just "fetch failed".
  */
 function describeConnectError(error: any): string {
-  const cause = error?.cause;
-  if (cause) {
-    const code = cause.code ? `${cause.code}: ` : '';
-    return `${code}${cause.message ?? String(cause)}`;
-  }
-  return error?.message ?? String(error);
+  const detail = error?.cause ?? error;
+  const code = detail.code ? `${detail.code}: ` : '';
+  return `${code}${detail.message ?? String(detail)}`;
 }
 
 /** Owns one child-process connection per configured MCP server and exposes their tools as a merged set. */

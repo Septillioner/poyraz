@@ -9,6 +9,8 @@ export interface McpStdioServerDef {
 export interface McpHttpServerDef {
   url: string;
   headers?: Record<string, string>;
+  /** Skips TLS certificate verification for this server only. */
+  ignoreCertificate?: boolean;
   disabled?: boolean;
 }
 
