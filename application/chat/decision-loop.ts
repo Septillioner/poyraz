@@ -204,6 +204,10 @@ export async function runDecisionLoop(
   let lastErrorKey: string | undefined;
   let consecutiveSameError = 0;
   let lastUsage: TokenUsage | undefined;
+  // `context.usage` of the request in flight. A tool-less reply may still be followed by another
+  // round (gate retry, continuation), so its `final` flag is only known once that is decided.
+  let pendingUsage: ((final: boolean) => void) | undefined;
+  const settleUsage = (final: boolean) => pendingUsage?.(final);
   const gateRetries = new Map<number, number>();
 
   const isToolLoopBlocked = () => circuitBreakerNoticeSent;
@@ -256,24 +260,33 @@ export async function runDecisionLoop(
       );
 
       if (response.usage) {
-        lastUsage = response.usage;
-        handlers.onUsage?.(response.usage);
-        // Published before the abort check so a cancelled turn still reports the
-        // request it already paid for. The prompt is measured on the history that
-        // was actually sent, before this round's assistant message is appended.
-        handlers.onEvent?.({
-          type: 'context.usage',
-          promptTokens: response.usage.promptTokens,
-          completionTokens: response.usage.completionTokens,
-          totalTokens: response.usage.totalTokens,
-          cachedTokens: response.usage.cachedTokens,
-          round,
-          final: isToolLoopBlocked() || !response.tool_calls?.length,
-        });
+        const usage = response.usage;
+        const usageRound = round;
+        lastUsage = usage;
+        handlers.onUsage?.(usage);
+        // Published even when the turn is cancelled right after: a cancelled turn still reports
+        // the request it already paid for. The prompt is measured on the history that was
+        // actually sent, before this round's assistant message is appended.
+        pendingUsage = (final) => {
+          pendingUsage = undefined;
+          handlers.onEvent?.({
+            type: 'context.usage',
+            promptTokens: usage.promptTokens,
+            completionTokens: usage.completionTokens,
+            totalTokens: usage.totalTokens,
+            cachedTokens: usage.cachedTokens,
+            round: usageRound,
+            final,
+          });
+        };
       }
       assertNotAborted(handlers.signal);
 
       const toolCalls = isToolLoopBlocked() ? undefined : response.tool_calls;
+
+      // `final` means no further request follows. Another round only runs while the round budget lasts.
+      const anotherRoundPossible = round < deps.policy.maxToolRounds;
+      if (toolCalls?.length) settleUsage(!anotherRoundPossible);
 
       // Dropping `tool_calls` without dropping the raw provider output would leave
       // `function_call` items the next request replays with nothing to answer them.
@@ -301,6 +314,7 @@ export async function runDecisionLoop(
               gateIndex,
               retries: retries + 1,
             });
+            settleUsage(!anotherRoundPossible);
             handlers.addMessage({ role: 'user', content: verdict.notice });
             continue outer;
           }
@@ -310,6 +324,7 @@ export async function runDecisionLoop(
             logger.warn('Response gate: retry budget exhausted; sanitizing', { gateIndex });
             handlers.addMessage({ role: 'assistant', content: sanitized });
             flushTextDelta(handlers, sanitized);
+            settleUsage(true);
             return { content: sanitized, usage: response.usage ?? lastUsage, continuation: outcome() };
           }
         }
@@ -319,6 +334,7 @@ export async function runDecisionLoop(
         }
 
         if (!continuationPolicy) {
+          settleUsage(true);
           return { content: response.content, usage: response.usage ?? lastUsage };
         }
 
@@ -347,6 +363,7 @@ export async function runDecisionLoop(
         if (decision.kind === 'continue') {
           if (remaining === 0) {
             logger.info('Continuation stopped: maxContinuations reached', { continuations, cap });
+            settleUsage(true);
             return {
               content: response.content,
               usage: response.usage ?? lastUsage,
@@ -356,12 +373,14 @@ export async function runDecisionLoop(
           if (typeof decision.notice === 'string' && decision.notice.trim()) {
             continuations++;
             logger.info('Continuation: another round', { continuations, round });
+            settleUsage(!anotherRoundPossible);
             handlers.addMessage({ role: 'user', content: decision.notice });
             continue outer;
           }
           logger.warn('Continuation policy returned an empty notice; ending the turn');
         }
 
+        settleUsage(true);
         return {
           content: response.content,
           usage: response.usage ?? lastUsage,
@@ -511,9 +530,12 @@ export async function runDecisionLoop(
 
     const errorMsg = `Tool loop limit reached (${deps.policy.maxToolRounds}). Stopping to avoid unstable behavior.`;
     logger.warn(errorMsg);
+    settleUsage(true);
     handlers.addMessage({ role: 'assistant', content: errorMsg });
     return { content: errorMsg, usage: lastUsage, continuation: outcome() };
   } catch (error) {
+    // The turn ends here (abort or failure): the request already paid for is still reported.
+    settleUsage(true);
     if (error instanceof ChatAbortedError) {
       completePendingToolResponses(handlers);
     }

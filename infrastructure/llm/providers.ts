@@ -36,7 +36,8 @@ export class OllamaProvider implements LLMProvider {
       model: options.model ?? '',
       messages: sanitizeToolPairing(options.messages) as any,
       options: options.options,
-      tools: options.tools,
+      // An empty list is never sent: the key is left out.
+      tools: options.tools?.length ? options.tools : undefined,
       stream: true,
     });
 
@@ -214,13 +215,15 @@ export class OpenAIProvider implements LLMProvider {
   ): Promise<ChatResponse> {
     const { instructions, input } = toResponsesInput(sanitizeToolPairing(options.messages));
     const tools = toResponsesTools(options.tools);
+    const reasoning = buildResponsesReasoning(options.reasoning?.effort);
 
     const requestBody: Record<string, unknown> = {
       ...(options.model ? { model: options.model } : {}),
       input,
       stream: true,
       store: false,
-      reasoning: buildResponsesReasoning(options.reasoning?.effort),
+      // Only when Reasoning(...) set an effort; nothing is implied.
+      ...(reasoning ? { reasoning } : {}),
     };
 
     if (instructions) {
@@ -335,6 +338,7 @@ export class OpenAIProvider implements LLMProvider {
     options: ChatOptions,
     onToken?: (token: string) => void
   ): Promise<ChatResponse> {
+    const tools = this.toolsForRequest(options.tools);
     const requestBody: Record<string, unknown> = {
       ...(options.model ? { model: options.model } : {}),
       messages: sanitizeToolPairing(options.messages).map((msg) => ({
@@ -352,7 +356,8 @@ export class OpenAIProvider implements LLMProvider {
           },
         })),
       })),
-      tools: this.toolsForRequest(options.tools),
+      // An empty list is never sent: the key is left out.
+      ...(tools?.length ? { tools } : {}),
       stream: true,
       stream_options: { include_usage: true },
     };

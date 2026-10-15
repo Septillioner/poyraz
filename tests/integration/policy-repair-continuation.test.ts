@@ -698,3 +698,153 @@ describe('continuation policy runs inside the decision loop', () => {
     expect((await agent.chat('two')).continuation).toEqual({ continuations: 1 });
   });
 });
+
+// ---------------------------------------------------------------------------
+// context.usage `final` is decided after gates and continuation
+// ---------------------------------------------------------------------------
+
+describe('context.usage final flag', () => {
+  type UsageEvent = { round: number; final: boolean };
+
+  /** Runs one turn and returns the usage events plus everything else that happened, in order. */
+  async function runTurn(
+    configure: (builder: AgentBuilder, trace: string[]) => AgentBuilder,
+    steps: Parameters<typeof mockLLM>[0],
+    signal?: AbortSignal
+  ) {
+    const trace: string[] = [];
+    const usage: UsageEvent[] = [];
+    const agent = configure(new AgentBuilder().Provider(mockLLM(steps)).RegisterTool(echoTool), trace).Build();
+    let error: unknown;
+    try {
+      await agent.chat('go', {
+        signal,
+        onEvent: (event) => {
+          if (event.type === 'context.usage') {
+            usage.push({ round: event.round, final: event.final });
+            trace.push(`usage:${event.round}:${event.final}`);
+          }
+        },
+      });
+    } catch (caught) {
+      error = caught;
+    }
+    return { usage, trace, error };
+  }
+
+  it('a plain reply is final', async () => {
+    const { usage } = await runTurn((b) => b, [{ content: 'hi' }]);
+    expect(usage).toEqual([{ round: 1, final: true }]);
+  });
+
+  it('a tool round is not final, the closing reply is', async () => {
+    const { usage } = await runTurn((b) => b, [
+      { tool_calls: [toolCall(echoTool.name, { text: 'a' })] },
+      { content: 'done' },
+    ]);
+    expect(usage).toEqual([
+      { round: 1, final: false },
+      { round: 2, final: true },
+    ]);
+  });
+
+  it('a continue decision keeps the request non-final; the event follows the decision', async () => {
+    const { usage, trace } = await runTurn(
+      (b, order) =>
+        b.Continuation({
+          evaluate: (context) => {
+            order.push(`evaluate:${context.continuations}`);
+            return context.continuations === 0 ? { kind: 'continue', notice: 'more' } : { kind: 'stop' };
+          },
+        }),
+      [{ content: 'first' }, { content: 'second' }]
+    );
+    expect(usage).toEqual([
+      { round: 1, final: false },
+      { round: 2, final: true },
+    ]);
+    expect(trace).toEqual(['evaluate:0', 'usage:1:false', 'evaluate:1', 'usage:2:true']);
+  });
+
+  it('a stop decision and the maxContinuations cap make the request final', async () => {
+    const stopped = await runTurn(
+      (b) => b.Continuation({ evaluate: () => ({ kind: 'stop', reason: 'enough' }) }),
+      [{ content: 'a' }]
+    );
+    expect(stopped.usage).toEqual([{ round: 1, final: true }]);
+
+    const capped = await runTurn(
+      (b) => b.MaxToolRounds(10).Continuation({ maxContinuations: 1, evaluate: () => ({ kind: 'continue', notice: 'x' }) }),
+      [{ content: 'a' }]
+    );
+    expect(capped.usage).toEqual([
+      { round: 1, final: false },
+      { round: 2, final: true },
+    ]);
+  });
+
+  it('a response gate retry is not final', async () => {
+    const { usage } = await runTurn(
+      (b) =>
+        b.ResponseGates({
+          maxRetries: 1,
+          evaluate: ({ content }) => (content === 'BAD' ? { kind: 'retry', notice: 'again' } : { kind: 'accept' }),
+        }),
+      [{ content: 'BAD' }, { content: 'fine' }]
+    );
+    expect(usage).toEqual([
+      { round: 1, final: false },
+      { round: 2, final: true },
+    ]);
+  });
+
+  it('a request that cannot be followed by another round (round budget used up) is final', async () => {
+    const tool = await runTurn((b) => b.MaxToolRounds(1), [{ tool_calls: [toolCall(echoTool.name, { text: 'a' })] }]);
+    expect(tool.usage).toEqual([{ round: 1, final: true }]);
+
+    const continued = await runTurn(
+      (b) => b.MaxToolRounds(1).Continuation({ evaluate: () => ({ kind: 'continue', notice: 'more' }) }),
+      [{ content: 'a' }]
+    );
+    expect(continued.usage).toEqual([{ round: 1, final: true }]);
+  });
+
+  it('an abort while the policy decides still reports the paid request, as final, once', async () => {
+    const controller = new AbortController();
+    const { usage, error } = await runTurn(
+      (b) =>
+        b.Continuation({
+          evaluate: async () => {
+            controller.abort();
+            return { kind: 'continue', notice: 'more' };
+          },
+        }),
+      [{ content: 'a' }],
+      controller.signal
+    );
+    expect(error).toBeInstanceOf(ChatAbortedError);
+    expect(usage).toEqual([{ round: 1, final: true }]);
+  });
+
+  it('an abort right after the response still reports the request', async () => {
+    const controller = new AbortController();
+    const llm = mockLLM([{ content: 'a' }]);
+    const original = llm.chat.bind(llm);
+    llm.chat = async (...args: Parameters<typeof original>) => {
+      const response = await original(...args);
+      controller.abort();
+      return response;
+    };
+    const events: UsageEvent[] = [];
+    const agent = new AgentBuilder().Provider(llm).Build();
+    await expect(
+      agent.chat('go', {
+        signal: controller.signal,
+        onEvent: (event) => {
+          if (event.type === 'context.usage') events.push({ round: event.round, final: event.final });
+        },
+      })
+    ).rejects.toBeInstanceOf(ChatAbortedError);
+    expect(events).toEqual([{ round: 1, final: true }]);
+  });
+});

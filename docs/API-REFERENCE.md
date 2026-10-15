@@ -12,6 +12,7 @@ Markers: **Deprecated** means a replacement exists and the symbol should not be 
 
 ## Contents
 
+- [Documentation pages](#documentation-pages)
 - [Agent, config and builder](#agent-config-and-builder)
 - [Agent policy](#agent-policy)
 - [Chat, decision loop and events](#chat-decision-loop-and-events)
@@ -25,6 +26,25 @@ Markers: **Deprecated** means a replacement exists and the symbol should not be 
 - [Stats and usage](#stats-and-usage)
 - [UI and presentation](#ui-and-presentation)
 - [Logging and workspace](#logging-and-workspace)
+
+## Documentation pages
+
+| Page | Covers |
+|------|--------|
+| [Getting started](getting-started.md) | Install, minimal agent, turning features on, running without an API key |
+| [Agent API](agent-api.md) | Every builder and agent method, the clean-builder principle, continuation |
+| [Agent policy](policy.md) | `AgentPolicy`, allow-list, error breaker, response gates, per-turn limits |
+| [Templates](templates.md) | `AgentTemplate` and `FromTemplate` / `FromJSON` |
+| [Migrating to 1.0](migration-1.0.md) | Breaking changes of 1.0.0 with before / after and an upgrade checklist (see also the [changelog](../CHANGELOG.md)) |
+| [Auth and providers](auth-and-providers.md) | Keys, model profiles, listing models, custom provider instance |
+| [Tools](tools.md) and [Custom tools](custom-tools.md) | Built-in tools, presets, registry, `defineTool` |
+| [Context and token metering](context.md) | Context categories, meters, estimator, summarization |
+| [MCP](mcp.md) | Optional MCP on the agent, the shared manager, tool names |
+| [Streaming](streaming.md) | `AgentStreamEvent` types, abort, activity tracker |
+| [Rate limit and logging](rate-limit-and-logging.md) | Bounded rate-limit waiting, per-agent logging |
+| [Workspace](workspace.md) | Workspace root and file logging helpers |
+| [How it works](how-it-works.md) | Layering and runtime flow |
+| [Evals](evals.md) | Eval harness |
 
 ## Agent, config and builder
 
@@ -52,7 +72,7 @@ Markers: **Deprecated** means a replacement exists and the symbol should not be 
 | `Skill` (type) | `{ name, description, content }` | [System, rules and skills](agent-api.md#system-rules-and-skills) |
 | `agent.getModel` / `setModel`, `getModelProfile` / `setModelProfile`, `getName`, `setSessionId` / `getSessionId`, `getApiKeyPreview`, `getConfig` | Model, profile swap, session id, config | [Model and session](agent-api.md#model-and-session) |
 | `agent.loadHistory`, `getHistory`, `getMessageHistory`, `summarize`, `setChatLogSource`, `getPromptCacheKey` | History restore/read, manual summary, debug tag, prompt cache key | [History and usage](agent-api.md#history-and-usage) |
-| `agent.connectMcp`, `disconnectMcp`, `getMcpStates`, `getMcpToolPrefix`, `getRateLimitConfig`, `getToolRegistry` | MCP lifecycle of the agent, its MCP prefix, resolved rate-limit config, own tool registry | [MCP](mcp.md#optional-mcp-on-the-agent), [Agent API](agent-api.md#agent) |
+| `agent.connectMcp`, `disconnectMcp`, `getMcpStates`, `getMcpToolPrefix`, `getRateLimitConfig`, `getToolRegistry` | MCP lifecycle of the agent, its MCP prefix, resolved rate-limit config, own tool registry. `connectMcp()` does not throw when a server fails: that server's state has `status: 'error'` | [MCP](mcp.md#optional-mcp-on-the-agent), [Connection errors](mcp.md#connection-errors-do-not-throw), [Agent API](agent-api.md#agent) |
 
 ## Agent policy
 
@@ -139,8 +159,8 @@ Markers: **Deprecated** means a replacement exists and the symbol should not be 
 | `TOOL_ALIASES`, `resolveCanonicalToolName(name)` | Tool name aliases (currently empty) | [Inspecting the registry](tools.md#inspecting-the-registry) |
 | `TOOL_PRESENTATIONS`, `withPresentation(name, partial?)` | Default UI presentation per built-in tool | [Presentation and meta](custom-tools.md#presentation-and-meta) |
 | `ToolRoutingPolicy` (type) | Tool loop limits | [Routing policy](agent-api.md#routing-policy) |
-| `agent.mergeExternalTools(tools)` | Add external (MCP or other) tools after build; also registers them globally | [Register vs add](custom-tools.md#register-vs-add), [Policy and tools](agent-api.md#policy-and-tools) |
-| `agent.removeExternalTools(prefix?)` | Remove tools by name prefix (default `mcp_`) and unregister them | [Policy and tools](agent-api.md#policy-and-tools) |
+| `agent.mergeExternalTools(tools)` | Add external (MCP or other) tools after build. They are registered in the agent's own registry (`getToolRegistry()`), never in the shared `toolRegistry`; returns the names that replaced an existing tool | [Register vs add](custom-tools.md#register-vs-add), [Policy and tools](agent-api.md#policy-and-tools) |
+| `agent.removeExternalTools(prefix?)` | Remove tools by name prefix (default: the configured MCP prefix, `mcp_`) and unregister them from the agent's registry | [Policy and tools](agent-api.md#policy-and-tools) |
 | `load_skill` tool | Name configurable with `SkillTool({ toolName })`. Present only with at least one skill and not disabled; returns a skill's `content` | [`load_skill`](tools.md#load_skill) |
 
 ## Built-in tools
@@ -222,7 +242,7 @@ Waiting on a rate-limit rejection is **off by default**; enable it with `RateLim
 
 | Symbol | What it does | Detail |
 |--------|--------------|--------|
-| `createActivityTracker()` | New tracker: `{ activities: Map, lifecyclePhase? }` | [Streaming](streaming.md), [How it works](how-it-works.md#layering) |
+| `createActivityTracker(registry?)` | New tracker (optionally resolving presentations from a given `ToolRegistry`): `{ activities: Map, lifecyclePhase? }` | [Streaming](streaming.md), [How it works](how-it-works.md#layering) |
 | `applyStreamEvent(tracker, event)` | Fold an `AgentStreamEvent` into the tracker; returns the changed `ToolActivityView` or `null` | [Streaming](streaming.md) |
 | `getLifecycleLabel(phase?)` | Human label for a lifecycle phase | [Event types](streaming.md#event-types) |
 | `ActivityTracker`, `ToolActivityView`, `ActivityStatus` (types) | Tool activity view model (`running` \| `success` \| `error` \| `blocked`) | [Streaming](streaming.md) |

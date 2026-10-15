@@ -32,6 +32,27 @@ console.log(content);
 
 `Build()` throws `AgentConfigError` when there is neither a `Provider(...)` nor a model together with a host.
 
+## Without an API key
+
+`Provider(...)` takes any object with a `chat` method, so you can try the library, or test your host, with a stub. It needs no model, host or key:
+
+```ts
+import { AgentBuilder } from 'poyraz';
+
+const agent = new AgentBuilder()
+  .Provider({
+    async chat({ messages }) {
+      const last = messages[messages.length - 1];
+      return { content: `You said: ${last.content}` };
+    },
+  })
+  .Build();
+
+await agent.init();
+const { content } = await agent.chat('hello');
+console.log(content); // You said: hello
+```
+
 ## Turning features on
 
 Every feature is an explicit opt-in:

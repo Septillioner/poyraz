@@ -63,7 +63,7 @@ ac.abort();
 | `lifecycle` | `phase` | `thinking`, `summarizing`, `summarized` |
 | `text.delta` | `delta` | Assistant text stream |
 | `reasoning.delta` | `delta` | Reasoning stream when the provider emits it |
-| `context.usage` | `promptTokens`, `completionTokens`, `totalTokens`, `cachedTokens?`, `round`, `final` | After every model request of the turn, before an abort can end it. `promptTokens` is the live window occupancy; `round` is 1-based; `final` is true when the turn ends after this request. See [Context](context.md) |
+| `context.usage` | `promptTokens`, `completionTokens`, `totalTokens`, `cachedTokens?`, `round`, `final` | After every model request of the turn, before an abort can end it. `promptTokens` is the live window occupancy; `round` is 1-based; `final` is true only when the turn really ends after this request: a tool round, a response gate retry and a `continue` decision of a [`ContinuationPolicy`](policy.md#continuation) are all `final: false`. A request that cannot be followed by another round (the `maxToolRounds` budget is used up), and a turn cut short by an abort or an error, report `final: true`. See [Context](context.md) |
 | `rate_limit.wait` | `attempt`, `delayMs`, `retryAt`, `source`, `reason?` | Rate limited (TPM/RPM); waiting `delayMs` before the same request is retried. `source` is `header`, `message`, or `fallback` |
 | `rate_limit.resumed` | `attempt` | The wait ended and the request is being sent again |
 | `tool.call.start` | `toolCallId`, `toolName`, `args` | Tool about to run |
@@ -71,6 +71,12 @@ ac.abort();
 | `tool.call.result` | `toolCallId`, `toolName`, `content`, `ok`, `error?`, `meta?` | Tool output |
 
 `emitEvent(handlers, event)` is available if you build a custom loop that reuses the same event shape.
+
+## Retries, notices and continuation
+
+The `context.usage` event of a tool-less reply is published once gates and continuation have decided, so its `final` flag is reliable; it is still published for a turn that is cancelled at that point. Rounds that are not tool rounds look the same on the stream: a response gate retry or a continuation starts another model request, so you see another `lifecycle: thinking`, another `context.usage` (with the next `round`) and more `text.delta`. The notice that triggers it is a `user` message in the history, not an event. With `bufferTextUntilAccepted` in the policy, the `text.delta` of a tool-less reply arrive only after the response gates accepted it (all at once), and a rejected reply is never streamed. `agent.chat` resolves with `continuation` (`{ continuations, reason?, data? }`) only when a continuation policy is configured.
+
+Cancelling with the `signal` ends the turn with `ChatAbortedError`, also while a continuation policy is deciding; the `context.usage` of requests already paid for was emitted before.
 
 ## Rate limits
 

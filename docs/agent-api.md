@@ -66,8 +66,8 @@ const agent = new AgentBuilder()
 |--------|--------|
 | `WithPresets(...presets)` | `filesystem` \| `shell` \| `search` (built-in tools, see [Tools](tools.md)) |
 | `WithTools(...names)` | Include specific tool names from the registry |
-| `WithoutTools(...names)` | Exclude names after resolution (also hides `load_skill`) |
-| `DefaultSystemTools(permissions?)` | Map read/write/execute/grep flags to presets |
+| `WithoutTools(...names)` | Exclude names from what `WithPresets` / `WithTools` select. It does not remove tools added with `RegisterTool`, `AddTool(s)` or `DefaultSystemTools`. Excluding `load_skill` (or the configured skill tool name) hides the skill tool |
+| `DefaultSystemTools(permissions?)` | Map `read` / `write` (filesystem), `execute` (shell) and `grep` / `search` flags to presets and add those tools to this agent. Called with no argument it enables read, write, execute and grep |
 | `RegisterTool(definition)` | Add to this agent and the builder's own registry; the shared `toolRegistry` is not touched |
 | `AddTool(name, definition)` / `AddTools(map)` | Add definitions on this agent |
 
@@ -81,8 +81,8 @@ The builder resolves presets, `WithTools` and `WithoutTools` into one `tools` ma
 |--------|--------|
 | `SystemPrompt(text)` | Host system text. Empty/omitted and no rules → no system message |
 | `System(text)` | Alias field (`system`). `SystemPrompt` wins when both are set |
-| `Rules(...texts)` | Appended after the system text, separated by a blank line. Blank entries are dropped |
-| `AddSkill(skill)` / `AddSkills(skills)` | Register skills (`{ name, description, content }`). Same name replaces |
+| `Rules(...texts)` | Appended after the system text, separated by a blank line. Blank entries are dropped. A later `Rules(...)` call replaces the earlier list; `Rules()` clears it |
+| `AddSkill(skill)` / `AddSkills(skills)` | Register skills (`{ name, description, content }`). Same name replaces. A skill missing its name, description or content throws |
 | `SkillTool(config \| boolean)` | `{ enabled, toolName }` for the skill-loading tool. Omitted `enabled` → on only when skills exist; `false` hides it. `toolName` defaults to `load_skill` |
 
 ### Context and summarization
@@ -93,8 +93,8 @@ The builder resolves presets, `WithTools` and `WithoutTools` into one `tools` ma
 | `ContextWindow(tokens)` | Token window for meter percentages and token-based summarization. Ignored below 1000 |
 | `TokenEstimator(options)` | Tune the local estimator (`charsPerToken`, `messageOverheadTokens`). See [Context](context.md#configuration) |
 | `Summarization(config \| boolean)` | `{ enabled, thresholdRatio, keepRatio, prompt, prefix, toolResultMaxChars }`. `true` / `false` only toggles `enabled`. Off by default |
-| `AutoSummary(enabled = true)` | Shortcut for `Summarization({ enabled })` |
-| `AutoSummaryThreshold(ratio)` | Shortcut for `Summarization({ thresholdRatio })`. Clamped to 0.5..0.95 |
+| `AutoSummary(enabled = true)` | Legacy shortcut (`autoSummary`); `summarization.enabled` wins when both are set |
+| `AutoSummaryThreshold(ratio)` | Legacy shortcut (`summaryThresholdRatio`); `summarization.thresholdRatio` wins when both are set. Clamped to 0.5..0.95 |
 
 `summarization` fields (all optional):
 
@@ -223,7 +223,7 @@ const { content, usage, contextUsage, continuation } = await agent.chat(userInpu
 
 | Method | Description |
 |--------|-------------|
-| `connectMcp()` / `disconnectMcp()` | Connect the `mcp.servers` of this agent (`init()` does it once) / remove its tools and close the connections |
+| `connectMcp()` / `disconnectMcp()` | Connect the `mcp.servers` of this agent (`init()` does it once) / remove its tools and close the connections. `connectMcp()` does not throw when a server fails: it returns the server states and the failed one has `status: 'error'` (see [Connection errors do not throw](mcp.md#connection-errors-do-not-throw)) |
 | `getMcpStates()` | Per-server state of this agent's own manager |
 | `getMcpToolPrefix()` | Prefix of bridged tool names (`mcp.toolPrefix`, default `mcp_`) |
 | `getRateLimitConfig()` | `ResolvedRateLimitConfig` after defaults (`enabled: false`, `maxWaits: 0` when off) |
@@ -278,7 +278,7 @@ Details: [Context and token metering](context.md).
 
 `buildSystemPrompt(system?, rules?, skills?, options?)` is exported. It returns `{ content, cacheKey, parts }` (`BuiltSystemPrompt`). `content` is the system text, then the non-empty rules, joined by a blank line; empty → no system message. The library adds nothing of its own. `parts` is `{ system, rules, skills }` (`SystemPromptParts`). `parts.skills` is the skill catalog and is not part of `content`; `options.skillCatalog: false` reports it empty (the agent passes that when the skill tool is not exposed).
 
-`Rules` are host text only. `AddSkill` registers `{ name, description, content }`; names, descriptions and content are trimmed and an incomplete skill is dropped. The skill tool (`load_skill`, or `skillTool.toolName`) lists each name and description in its description; calling it returns the skill's `content` as a tool result, and skill text is never copied into the system message. Set skills at build time or replace them with `setSkills`; changing the catalog changes the tool schema.
+`Rules` are host text only. `AddSkill` registers `{ name, description, content }`; names, descriptions and content are trimmed, and an incomplete skill is dropped when skills arrive through config, JSON or `setSkills` (`AddSkill` / `AddSkills` throw instead). The skill tool (`load_skill`, or `skillTool.toolName`) lists each name and description in its description; calling it returns the skill's `content` as a tool result, and skill text is never copied into the system message. Set skills at build time or replace them with `setSkills`; changing the catalog changes the tool schema.
 
 The tool exists only when the agent has at least one skill, `skillTool.enabled` is not `false`, and the name is not excluded with `WithoutTools(...)`. If `allowedTools` is a name list it must include the tool name. Helpers: `resolveSkillToolName(config?)` (configured name or `load_skill`), `isSkillToolEnabled(skills, config?)`, `buildSkillCatalog(skills)`, `LOAD_SKILL_TOOL_NAME` / `DEFAULT_LOAD_SKILL_TOOL_NAME`. The tool factory itself, `createLoadSkillTool(skills, toolName?)`, is internal to the package.
 

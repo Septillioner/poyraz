@@ -38,7 +38,7 @@ if (Math.abs(agent.getContextDrift()?.percent ?? 0) > 10) {
 | `rules` | Host rules appended to the system message |
 | `skills` | The skill tool schema (the skill catalog; `load_skill` or your `skillTool.toolName`) and loaded skill bodies |
 | `tools` | Tool schemas that are not MCP-bridged |
-| `mcp` | Tool schemas bridged from MCP servers (name prefix `mcp.toolPrefix`, default `mcp_`) |
+| `mcp` | Tool schemas bridged from MCP servers: tool names starting with the agent's MCP prefix (`mcp.toolPrefix`, default `mcp_`; `agent.getMcpToolPrefix()` returns the resolved one) |
 | `summary` | Rolling summary message (a `user` message starting with `summarization.prefix`) |
 | `conversation` | User text and assistant text |
 | `toolCalls` | Assistant `tool_calls` (id, name, arguments) |
@@ -56,8 +56,8 @@ Everything is off or unset by default: with no `ContextLimit`, no `ContextWindow
 | `ContextWindow(tokens)` | `contextWindowTokens` | Window size for meter percentages and token-based summarization. Ignored below 1000. Omitted → `windowTokens` and `percent` are `null` |
 | `ContextLimit(n)` | `contextLimit` | Turn limit for trim / summary |
 | `Summarization(config \| boolean)` | `summarization` | Rolling summary instead of trimming; see [Summarization](#summarization) |
-| `AutoSummary(enabled?)` | `autoSummary` | Shortcut for `summarization.enabled` |
-| `AutoSummaryThreshold(ratio)` | `summaryThresholdRatio` | Shortcut for `summarization.thresholdRatio`. Clamped to 0.5..0.95. Default 0.8 |
+| `AutoSummary(enabled?)` | `autoSummary` | Legacy shortcut for `summarization.enabled` (`summarization.enabled` wins when both are set) |
+| `AutoSummaryThreshold(ratio)` | `summaryThresholdRatio` | Legacy shortcut for `summarization.thresholdRatio` (`summarization.thresholdRatio` wins when both are set). Clamped to 0.5..0.95. Default 0.8 |
 | `TokenEstimator(options)` | `tokenEstimator` | `TokenEstimatorOptions`: `charsPerToken` (default 3.5, clamped to 1..8) and `messageOverheadTokens` (default 4) |
 
 `AgentTemplate` and `FromJSON` accept `contextWindowTokens`, `summaryThresholdRatio`, `contextLimit`, `autoSummary`, `summarization` and `tokenEstimator`.
@@ -103,7 +103,7 @@ Defaults live in one place (`application/context/summary-settings.ts`) and are e
 | `estimateContext(options?)` | `ContextEstimate` | Shortcut for `compileRequest(options).estimate`: `categories`, `total`, `chars`, `overheadTokens` |
 | `getContextMeterEstimate()` | `ContextMeter` | Meter from the local estimate (`source: 'estimate'`). Safe to call any time |
 | `getContextMeterReal()` | `ContextMeter` | Meter from the last provider-reported usage (`source: 'real'`). All zeros until a request has completed |
-| `getContextReal()` | `ContextRealSnapshot \| undefined` | Last completed request: `usage`, per-category split scaled to `promptTokens`, `total`, the `estimate` and the `drift` |
+| `getContextReal()` | `ContextRealSnapshot \| undefined` | Last completed request: `seq`, `at`, `usage`, per-category split scaled to `promptTokens`, `total`, the `estimate` and the `drift` |
 | `getContextDrift()` | `ContextDrift \| undefined` | Estimate minus real for the last completed request: `tokens`, `ratio`, `percent`. Positive means the estimate ran high |
 | `getContextRecords()` | `ContextRequestRecord[]` | Last 20 requests, newest last: `seq`, `at`, `model`, `estimate`, `real?`, `drift?` |
 | `getTokenEstimator()` | `TokenEstimator` | The estimator this agent uses |
@@ -114,7 +114,7 @@ Defaults live in one place (`application/context/summary-settings.ts`) and are e
 
 `getContextReal()`, `getContextDrift()` and the real meter are reset to "no data" after `loadHistory`, `summarize`, an auto-summary or a trim, because the last real request no longer matches the history.
 
-`chat()` returns `{ content, usage, contextUsage? }`. `usage` is billing for every tool round of the turn. `contextUsage` is the last request only, which is what occupies the window. The `context.usage` stream event carries the same per-request figures ([Streaming](streaming.md#event-types)).
+`chat()` returns `{ content, usage, contextUsage?, continuation? }` (`continuation` only with a continuation policy, see [Agent API](agent-api.md#continuation)). `usage` is billing for every tool round of the turn. `contextUsage` is the last request only, which is what occupies the window. The `context.usage` stream event carries the same per-request figures ([Streaming](streaming.md#event-types)).
 
 ## Meter shape
 
@@ -147,12 +147,12 @@ These are exported for hosts that build their own meter or loop. `Agent` already
 | `computeDrift(estimateTotal, realTotal)` | `ContextDrift`; `ratio` / `percent` are `null` when real is 0 |
 | `completeRecord(record, usage)` | Pairs a `ContextRequestRecord` with provider usage and drift |
 | `realSnapshot(record)` | `ContextRealSnapshot` from a completed record, or `undefined` |
-| `categorizeMessage(message, toolNames)` | Primary category of a message. `toolNames` maps `tool_call_id` → tool name |
-| `buildMessageMeta(message, toolNames, estimator)` | `MessageContextMeta`: `category`, `chars` and `tokens` per category, `overheadTokens` |
-| `createMessageContext(options)` | Standalone `MessageContext` (`limit`, `estimator`, `keepRatio`, `summaryPrefix`, `skillToolName`): add/get/set messages, trim, memory usage, per-message meta |
+| `categorizeMessage(message, toolNames, options?)` | Primary category of a message. `toolNames` maps `tool_call_id` → tool name. `options` is `CategorizeOptions`: `summaryPrefix` (default: the default summary prefix) and `skillToolName` (default `load_skill`), the names that make a message `summary` / a tool result `skills` |
+| `buildMessageMeta(message, toolNames, estimator, options?)` | `MessageContextMeta`: `category`, `chars` and `tokens` per category, `overheadTokens`. `options`: `CategorizeOptions`, as above |
+| `createMessageContext(options)` | Standalone `MessageContext` (`limit`, `estimator`, `keepRatio`, `summaryPrefix`, `skillToolName`): add/get/set messages, trim, memory usage, per-message meta, `getMessagesToSummarize(keepRatio?)`. Its `keepRatio` (default 0.6, clamped to 0.1..0.9) drives both its `trim()` and the summary cut; an `Agent` passes only `summaryPrefix` and `skillToolName`, so agent trims always keep 60% and `summarization.keepRatio` applies to summaries only |
 | `SUMMARY_MESSAGE_PREFIX` / `isSummaryMessage(message, prefix?)` | Default prefix of the rolling summary message (the neutral English one, same as `DEFAULT_SUMMARY_MESSAGE_PREFIX`) and its detector. Pass your `summarization.prefix` as `prefix` when you use a custom one |
 
-Types: `CompiledRequest`, `CompiledToolSchema`, `CompileRequestOptions`, `ContextCategory`, `ContextCategoryTokens`, `ContextDrift`, `ContextEstimate`, `ContextMeter`, `ContextRealSnapshot`, `ContextRequestRecord`, `MessageContextMeta`, `SystemPromptParts`, `ToolSchemaCategory`, `EstimateRequestInput`, `MessageEntry`, `TokenEstimator`, `TokenEstimatorOptions`, `CalibrationSample`, `ContextOptions`, `MessageContext`, `MemoryUsage`.
+Types: `CompiledRequest`, `CompiledToolSchema`, `CompileRequestOptions`, `ContextCategory`, `ContextCategoryTokens`, `ContextDrift`, `ContextEstimate`, `ContextMeter`, `ContextRealSnapshot`, `ContextRequestRecord`, `MessageContextMeta`, `SystemPromptParts`, `ToolSchemaCategory`, `EstimateRequestInput`, `MessageEntry`, `TokenEstimator`, `TokenEstimatorOptions`, `CalibrationSample`, `CategorizeOptions`, `ContextOptions`, `MessageContext`, `MemoryUsage`.
 
 ## System prompt parts
 

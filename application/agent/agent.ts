@@ -9,7 +9,8 @@ import {
   LOAD_SKILL_TOOL_NAME,
   normalizeSkills,
 } from '../../tools/definitions/skills.js';
-// Side-effect: register built-in tools before resolveAgentTools reads the registry.
+// Side-effect: registers the built-in tools in the shared `toolRegistry`. Builders and agents layer their
+// own registry over it (presets / `WithTools` resolve against it); importing it selects nothing.
 import '../../tools/index.js';
 import { MCP_TOOL_PREFIX, resolveMcpToolPrefix } from '../../infrastructure/mcp/mcp-tool-bridge.js';
 import type { McpClientManager, McpServerState } from '../../infrastructure/mcp/mcp-client-manager.js';

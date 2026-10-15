@@ -46,7 +46,8 @@ Second argument to `execute`:
 - `agent` — owning agent when wired
 - `sessionId` — session id
 - `abortSignal` — turn abort
-- `logger`, `lastReadFile`
+- `logger` — the logger of the owning agent
+- `lastReadFile` — `{ path, lineCount }` of the last read the loop saw. It is set after any successful tool whose `structured` result has `edit_ready: true`, a string `target_file` and a numeric `line_count` (the built-in `read_file` returns that shape), whatever the tool is called. Only the opt-in repair texts of `edit_file` use it
 
 ## Register vs add
 

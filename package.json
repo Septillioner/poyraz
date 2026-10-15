@@ -1,6 +1,6 @@
 {
   "name": "poyraz",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "description": "Embeddable AI agent library for Node.js: provider-agnostic chat, tool calling, MCP, context management and injectable policy. Every feature is opt-in.",
   "type": "module",
   "license": "MIT",
