@@ -14,10 +14,14 @@ function positiveInt(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
 }
 
-/** Order: `maxToolRounds`, `routingPolicy.maxToolRounds`, `options.max_tool_rounds`, then 10. */
+/**
+ * Order: `maxToolRounds`, `policy.maxToolRounds`, `routingPolicy.maxToolRounds`,
+ * `options.max_tool_rounds`, then 10.
+ */
 export function resolveMaxToolRounds(config: AgentConfig): number {
   return (
     positiveInt(config.maxToolRounds) ??
+    positiveInt(config.policy?.maxToolRounds) ??
     positiveInt(config.routingPolicy?.maxToolRounds) ??
     positiveInt(config.options?.max_tool_rounds) ??
     10

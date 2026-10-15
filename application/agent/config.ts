@@ -1,4 +1,5 @@
 import type { ChatMessage, LLMProvider, ReasoningConfig, ServiceTier, TokenUsage } from '../../domain/llm.js';
+import { isReasoningEffort, isServiceTier } from '../../domain/llm.js';
 import { DEFAULT_AGENT_POLICY, type AgentPolicy } from '../../domain/agent-policy.js';
 import type { McpServerDef } from '../../domain/mcp.js';
 import type { ToolPresetName } from '../../tools/core/registry.js';
@@ -22,6 +23,31 @@ export class AgentConfigError extends Error {
     super(message);
     this.name = 'AgentConfigError';
   }
+}
+
+/**
+ * Shared validation of `Reasoning(...)` and `Agent.setReasoning(...)`: `{ effort }` or `undefined`
+ * (no effort clears the setting). An unknown effort throws `AgentConfigError`.
+ */
+export function normalizeReasoning(config: ReasoningConfig | undefined): ReasoningConfig | undefined {
+  const effort = config?.effort;
+  if (effort !== undefined && !isReasoningEffort(effort)) {
+    throw new AgentConfigError(`Unknown reasoning effort: ${String(effort)}`);
+  }
+  return effort ? { effort } : undefined;
+}
+
+/** Shared validation of `ServiceTier(...)` and `Agent.setServiceTier(...)`. An unknown tier throws `AgentConfigError`. */
+export function normalizeServiceTier(tier: ServiceTier | undefined): ServiceTier | undefined {
+  if (tier !== undefined && !isServiceTier(tier)) {
+    throw new AgentConfigError(`Unknown service tier: ${String(tier)}`);
+  }
+  return tier;
+}
+
+/** A positive finite number, rounded down; anything else is `undefined` (shared by the builder and the agent). */
+export function normalizeMaxToolRounds(rounds: unknown): number | undefined {
+  return typeof rounds === 'number' && Number.isFinite(rounds) && rounds > 0 ? Math.floor(rounds) : undefined;
 }
 
 export interface Skill {
@@ -181,6 +207,35 @@ export function chainContinuation(...policies: ContinuationPolicy[]): Continuati
 /** Builds the summarization request text from the compacted conversation. */
 export type SummaryPromptBuilder = (conversation: string) => string;
 
+/** What `summarization.onSummarized` receives right after the history was replaced by a summary. */
+export interface SummarizedContext {
+  /** Summary text as the model wrote it (without the prefix). */
+  summary: string;
+  /** Prefix the summary message starts with. */
+  prefix: string;
+  /** Messages the summary replaced (the system message is never one of them). */
+  summarizedMessages: number;
+  /** Messages kept verbatim after the summary message. */
+  keptMessages: number;
+  /** Token estimate of the history messages before the summary (message text and tool calls, no tool schemas). */
+  tokensBefore: number;
+  /** Same estimate after the summary replaced the history. */
+  tokensAfter: number;
+  /** Snapshot of the history after the summary: system message (if any), summary message, kept tail. */
+  messages: readonly ChatMessage[];
+  /** Session the agent is bound to (`Agent.setSessionId`), when set. */
+  sessionId?: string;
+}
+
+/**
+ * Post-summary hook. A non-blank string it returns is appended to the end of the summary
+ * message (after a newline); `undefined`, `null` or blank text adds nothing. It may be async.
+ * A throwing hook is logged and ignored: the summary stays as it is.
+ */
+export type OnSummarizedHook = (
+  summarized: SummarizedContext
+) => string | null | undefined | void | Promise<string | null | undefined | void>;
+
 export interface SummarizationConfig {
   /** Rolling summary instead of trim. Off by default. */
   enabled?: boolean;
@@ -197,6 +252,8 @@ export interface SummarizationConfig {
   prefix?: string;
   /** Tool results are cut to this many characters in the summarization input. Omitted -> built-in default (200). */
   toolResultMaxChars?: number;
+  /** Called after every summary; may return text to append to the summary message. Off (undefined) by default. */
+  onSummarized?: OnSummarizedHook;
 }
 
 // ---------------------------------------------------------------------------
@@ -339,6 +396,10 @@ export interface AgentConfig {
   sameToolBreaker?: SameToolBreakerConfig;
   /** Tool names whose success counts as progress for the same-tool breaker. Default: none. */
   progressTools?: string[];
+  /** Longest tool result in characters; a longer one is cut and ends with a `[truncated: ...]` note. Omitted -> no limit. */
+  toolResultMaxChars?: number;
+  /** Longest tool result in UTF-8 bytes; same cut and note. Omitted -> no limit. */
+  toolResultMaxBytes?: number;
   continuation?: ContinuationPolicy;
   summarization?: SummarizationConfig;
   skillTool?: SkillToolConfig;
@@ -383,7 +444,9 @@ export interface AgentTemplate {
   repair?: Omit<RepairConfig, 'resolvers' | 'generic'>;
   sameToolBreaker?: SameToolBreakerConfig;
   progressTools?: string[];
-  summarization?: Omit<SummarizationConfig, 'prompt'> & { prompt?: string };
+  toolResultMaxChars?: number;
+  toolResultMaxBytes?: number;
+  summarization?: Omit<SummarizationConfig, 'prompt' | 'onSummarized'> & { prompt?: string };
   skillTool?: SkillToolConfig;
   mcp?: AgentMcpConfig;
   rateLimit?: RateLimitConfig;

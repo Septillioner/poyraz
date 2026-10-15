@@ -3,6 +3,8 @@ import {
   type AgentConfig,
   type AgentMcpConfig,
   chainContinuation,
+  normalizeReasoning,
+  normalizeServiceTier,
   type AgentTemplate,
   type ContinuationPolicy,
   type LoggingConfig,
@@ -12,6 +14,7 @@ import {
   type SameToolBreakerConfig,
   type Skill,
   type SkillToolConfig,
+  type OnSummarizedHook,
   type SummarizationConfig,
 } from './config.js';
 import { normalizeSkills } from '../../tools/definitions/skills.js';
@@ -21,12 +24,14 @@ import { DEFAULT_OLLAMA_HOST } from '../../domain/model-profile.js';
 import { ToolDefinition } from '../../tools/index.js';
 import { createToolRegistry, toolRegistry, ToolPresetName } from '../../tools/core/registry.js';
 import { LogLevel, type FileLoggingConfig } from '../../shared/logger.js';
-import { isReasoningEffort, isServiceTier, type LLMProvider, type ReasoningConfig, type ServiceTier } from '../../domain/llm.js';
+import type { LLMProvider, ReasoningConfig, ServiceTier } from '../../domain/llm.js';
 import type { ToolRoutingPolicy } from '../chat/tool-policy.js';
 import type { TokenEstimatorOptions } from '../context/token-estimate.js';
 import { normalizeSummaryThreshold } from '../context/summary-settings.js';
 
-export const MIN_CONTEXT_WINDOW_TOKENS = 1000;
+import { MIN_CONTEXT_WINDOW_TOKENS, normalizeContextWindow } from '../context/context-window.js';
+
+export { MIN_CONTEXT_WINDOW_TOKENS };
 
 /**
  * `repair` from JSON: booleans and plain settings are read as they are; `resolvers` and `generic`
@@ -120,18 +125,12 @@ export class AgentBuilder {
   }
 
   Reasoning(config: ReasoningConfig): this {
-    if (config.effort !== undefined && !isReasoningEffort(config.effort)) {
-      throw new Error(`Unknown reasoning effort: ${String(config.effort)}`);
-    }
-    this.config.reasoning = config.effort ? { effort: config.effort } : undefined;
+    this.config.reasoning = normalizeReasoning(config);
     return this;
   }
 
   ServiceTier(tier?: ServiceTier): this {
-    if (tier !== undefined && !isServiceTier(tier)) {
-      throw new Error(`Unknown service tier: ${String(tier)}`);
-    }
-    this.config.serviceTier = tier;
+    this.config.serviceTier = normalizeServiceTier(tier);
     return this;
   }
 
@@ -247,9 +246,8 @@ export class AgentBuilder {
   }
 
   ContextWindow(tokens: number): this {
-    if (typeof tokens === 'number' && Number.isFinite(tokens) && tokens >= MIN_CONTEXT_WINDOW_TOKENS) {
-      this.config.contextWindowTokens = Math.floor(tokens);
-    }
+    const window = normalizeContextWindow(tokens);
+    if (window !== undefined) this.config.contextWindowTokens = window;
     return this;
   }
 
@@ -276,6 +274,17 @@ export class AgentBuilder {
   /** Summarization section: enabled, threshold/keep ratios, prompt and prefix. `true`/`false` toggles only. */
   Summarization(config: SummarizationConfig | boolean): this {
     this.config.summarization = typeof config === 'boolean' ? { enabled: config } : { ...config };
+    return this;
+  }
+
+  /**
+   * Post-summary hook (`summarization.onSummarized`): runs after each summary and may return text
+   * to append to the summary message. Does not enable summarization; `OnSummarized()` clears it.
+   * Calling `Summarization(...)` afterwards replaces the whole section, hook included.
+   */
+  OnSummarized(hook?: OnSummarizedHook): this {
+    const { onSummarized: _previous, ...rest } = this.config.summarization ?? {};
+    this.config.summarization = hook ? { ...rest, onSummarized: hook } : Object.keys(rest).length > 0 ? rest : undefined;
     return this;
   }
 
@@ -323,6 +332,18 @@ export class AgentBuilder {
     return this;
   }
 
+  /** Longest tool result in characters. A longer result is cut and ends with a `[truncated: ...]` note. Default: no limit. */
+  ToolResultMaxChars(chars: number): this {
+    if (isPositiveNumber(chars)) this.config.toolResultMaxChars = Math.floor(chars);
+    return this;
+  }
+
+  /** Longest tool result in UTF-8 bytes. Same cut and note. Default: no limit. */
+  ToolResultMaxBytes(bytes: number): this {
+    if (isPositiveNumber(bytes)) this.config.toolResultMaxBytes = Math.floor(bytes);
+    return this;
+  }
+
   /**
    * Plugs host-defined continuation rules. Several policies are chained (first `continue` wins,
    * see `chainContinuation`). Calling it again replaces the previous ones. Default: none.
@@ -342,6 +363,12 @@ export class AgentBuilder {
 
   AllowedTools(tools: 'all' | string[]): this {
     this.config.policy = { ...(this.config.policy ?? {}), allowedTools: tools === 'all' ? 'all' : [...tools] };
+    return this;
+  }
+
+  /** Tools that are never available (names or `*` patterns); deny wins over `AllowedTools`. Same as `Policy({ deniedTools })` on top of the current policy. */
+  DeniedTools(...names: string[]): this {
+    this.config.policy = { ...(this.config.policy ?? {}), deniedTools: [...names] };
     return this;
   }
 
@@ -453,6 +480,8 @@ export class AgentBuilder {
     if (json.repair !== undefined) this.Repair(repairFromJson(json.repair));
     if (json.sameToolBreaker !== undefined) this.SameToolBreaker(json.sameToolBreaker);
     if (json.progressTools?.length) this.ProgressTools(...json.progressTools);
+    if (json.toolResultMaxChars !== undefined) this.ToolResultMaxChars(json.toolResultMaxChars);
+    if (json.toolResultMaxBytes !== undefined) this.ToolResultMaxBytes(json.toolResultMaxBytes);
     if (json.policy) this.Policy(json.policy);
     if (json.continuation && typeof json.continuation.evaluate === 'function') {
       this.Continuation(json.continuation);

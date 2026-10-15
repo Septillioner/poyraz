@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { AgentBuilder } from '../../application/agent/agent-builder.js';
+import { isSummaryMessage } from '../../application/context/summarizer.js';
 import { buildSystemPrompt } from '../../application/prompt/system-prompt.js';
 import {
   buildSkillCatalog,
@@ -7,6 +9,7 @@ import {
   LOAD_SKILL_TOOL_NAME,
   resolveSkillToolName,
 } from '../../tools/definitions/skills.js';
+import { mockLLM } from '../integration/mock-llm.js';
 
 const skills = [
   { name: 'deploy', description: 'How to deploy', content: 'Run the deploy steps.' },
@@ -84,5 +87,55 @@ describe('buildSystemPrompt adds nothing by itself', () => {
 
   it('system and rules only, as given', () => {
     expect(buildSystemPrompt(' sys ', ['r1', ' ', 'r2']).content).toBe('sys\n\nr1\n\nr2');
+  });
+});
+
+describe('builder behaviour of system / rules / skills / summary switches', () => {
+  const build = () => new AgentBuilder().Provider(mockLLM([{ content: 'ok' }]));
+
+  it('AddSkill and AddSkills throw on an incomplete skill', () => {
+    expect(() => build().AddSkill({ name: 'a', description: '', content: 'x' })).toThrow(/Skill requires/);
+    expect(() => build().AddSkills([skills[0], { name: '', description: 'd', content: 'c' }])).toThrow(/Skill requires/);
+  });
+
+  it('setSkills drops incomplete skills silently; the tool and parts.skills follow', () => {
+    const agent = build().AddSkill(skills[0]).Build();
+    expect(agent.getTools()).toEqual(['load_skill']);
+    agent.setSkills([{ name: 'a', description: '', content: 'x' }]);
+    expect(agent.getTools()).toEqual([]);
+    expect(agent.compileRequest().parts.skills).toBe('');
+    agent.setSkills(skills);
+    expect(agent.getTools()).toEqual(['load_skill']);
+    expect(agent.compileRequest().parts.skills).toBe('deploy: How to deploy\nreview: How to review');
+  });
+
+  it('Rules(...) replaces the earlier list, drops blanks and clears with no arguments', () => {
+    expect(build().Rules('a').Rules('b', '  ').Build().getConfig().rules).toEqual(['b']);
+    expect(build().Rules('a').Rules().Build().getConfig().rules).toBeUndefined();
+  });
+
+  it('setRules / setSystemPrompt rebuild the system message; clearing both removes it', async () => {
+    const agent = build().Build();
+    await agent.init();
+    expect(agent.getHistory()).toEqual([]);
+    agent.setSystemPrompt('Be brief.');
+    agent.setRules(['No emojis.']);
+    expect(agent.getHistory()[0]).toEqual({ role: 'system', content: 'Be brief.\n\nNo emojis.' });
+    agent.setRules(undefined);
+    expect(agent.getHistory()[0]).toEqual({ role: 'system', content: 'Be brief.' });
+    agent.setSystemPrompt('');
+    expect(agent.getHistory()).toEqual([]);
+  });
+
+  it('summarization.enabled wins over the legacy autoSummary switch', async () => {
+    const run = async (builder: AgentBuilder) => {
+      const agent = builder.ContextLimit(4).Build();
+      await agent.init();
+      for (let i = 0; i < 6; i++) await agent.chat('turn ' + i);
+      return agent.getHistory().some((m) => isSummaryMessage(m));
+    };
+    expect(await run(build().AutoSummary(true))).toBe(true);
+    expect(await run(build().AutoSummary(true).Summarization({ enabled: false }))).toBe(false);
+    expect(await run(build().AutoSummary(false).Summarization({ enabled: true }))).toBe(true);
   });
 });

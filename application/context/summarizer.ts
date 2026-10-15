@@ -2,7 +2,7 @@ import type { ChatHandlers } from '../../domain/events.js';
 import { emitEvent, rateLimitStreamEvent } from '../../domain/events.js';
 import type { ChatMessage, LLMProvider, ServiceTier } from '../../domain/llm.js';
 import { logger } from '../../shared/logger.js';
-import type { SummaryPromptBuilder } from '../agent/config.js';
+import type { OnSummarizedHook, SummarizedContext, SummaryPromptBuilder } from '../agent/config.js';
 import type { MessageContext } from './message-context.js';
 import {
   buildSummaryPrompt,
@@ -34,6 +34,28 @@ export interface SummarizeOptions {
   keepRatio?: number;
   /** Tool results are cut to this length in the summarization input. Omitted -> 200. */
   toolResultMaxChars?: number;
+  /** Called right after a summary replaced the history (see `SummarizationConfig.onSummarized`). */
+  onSummarized?: OnSummarizedHook;
+}
+
+/** Token estimate of the messages in `context` (message text and tool calls, no tool schemas). */
+function estimateContextTokens(context: MessageContext): number {
+  let total = 0;
+  for (const { meta } of context.getMessageEntries()) {
+    for (const value of Object.values(meta.tokens)) total += value ?? 0;
+  }
+  return total;
+}
+
+/** Runs the hook; a throwing or non-text hook never breaks the summary. Returns the text to append, if any. */
+async function runSummarizedHook(hook: OnSummarizedHook, summarized: SummarizedContext): Promise<string> {
+  try {
+    const text = await hook(summarized);
+    return typeof text === 'string' ? text.trim() : '';
+  } catch (error: any) {
+    logger.warn('onSummarized hook failed; the summary is kept as is', { error: error?.message ?? String(error) });
+    return '';
+  }
 }
 
 function compactMessageForSummary(
@@ -125,6 +147,7 @@ export async function summarizeHistory(
 ): Promise<void> {
   const prefix = resolveSummaryPrefix(options.prefix);
   const { toSummarize, keepIndex } = context.getMessagesToSummarize(options.keepRatio);
+  const tokensBefore = options.onSummarized ? estimateContextTokens(context) : 0;
 
   if (toSummarize.length === 0) {
     logger.debug('Nothing to summarize');
@@ -161,10 +184,23 @@ export async function summarizeHistory(
     const hasSystem = messages.length > 0 && messages[0].role === 'system';
     const recentMessages = messages.slice(keepIndex);
 
-    if (hasSystem) {
-      context.setMessages([messages[0], summaryMessage, ...recentMessages]);
-    } else {
-      context.setMessages([summaryMessage, ...recentMessages]);
+    const withSummary = (summary: ChatMessage): ChatMessage[] =>
+      hasSystem ? [messages[0], summary, ...recentMessages] : [summary, ...recentMessages];
+    context.setMessages(withSummary(summaryMessage));
+
+    if (options.onSummarized) {
+      const extra = await runSummarizedHook(options.onSummarized, {
+        summary: response.content,
+        prefix,
+        summarizedMessages: toSummarize.length,
+        keptMessages: recentMessages.length,
+        tokensBefore,
+        tokensAfter: estimateContextTokens(context),
+        messages: context.getMessagesCopy(),
+      });
+      if (extra) {
+        context.setMessages(withSummary({ ...summaryMessage, content: `${summaryMessage.content}\n${extra}` }));
+      }
     }
 
     emitEvent(handlers, { type: 'lifecycle', phase: 'summarized' });

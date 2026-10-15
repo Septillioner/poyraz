@@ -90,6 +90,34 @@ new AgentBuilder()
 | `prompt` | `DEFAULT_SUMMARY_PROMPT` | Neutral English prompt. A string may hold `{{conversation}}` (appended when absent) or pass a function `(conversation) => string` (code only; JSON templates take a string) |
 | `prefix` | `DEFAULT_SUMMARY_MESSAGE_PREFIX` = `Summary of the earlier conversation:` | Start of the summary message (`<prefix> <summary text>`). It is also how a stored summary is recognized, so keep it stable for persisted histories |
 | `toolResultMaxChars` | `200` | Tool results are cut to this many characters in the summarization input |
+| `onSummarized` | none | Hook run after each summary (see [After-summary hook](#after-summary-hook)). Code only: not part of `AgentTemplate` / JSON |
+
+### After-summary hook
+
+Off unless you set it. `onSummarized(summarized)` (or the builder shortcut `OnSummarized(hook?)`, which does not enable summarization and clears the hook when called without an argument) runs right after a summary replaced the older messages. It receives a `SummarizedContext`:
+
+| Field | Meaning |
+|-------|---------|
+| `summary` | The summary text as the model wrote it, without the prefix |
+| `prefix` | Prefix the summary message starts with |
+| `summarizedMessages` | Number of messages the summary replaced (the system message is never one of them) |
+| `keptMessages` | Messages kept verbatim after the summary message |
+| `tokensBefore` / `tokensAfter` | Token estimate of the history messages (text and tool calls, no tool schemas) before and after the summary |
+| `messages` | Snapshot of the history after the summary: system message (if any), summary message, kept tail |
+| `sessionId` | `agent.setSessionId(...)` value, when set |
+
+A non-blank string the hook returns (it may be async) is appended to the end of the summary message after a newline; `undefined`, `null` or blank text adds nothing. A hook that throws is logged and ignored: the summary stays as it is. The hook is not called when nothing was summarized or when the summary request failed.
+
+```ts
+new AgentBuilder()
+  .Provider(provider)
+  .Summarization({ enabled: true })
+  .OnSummarized(({ summarizedMessages, tokensBefore, tokensAfter }) => {
+    console.log(`summary folded ${summarizedMessages} messages: ${tokensBefore} -> ${tokensAfter} tokens`);
+    return 'Files read so far: src/a.ts, src/b.ts'; // lands at the end of the summary message
+  })
+  .Build();
+```
 
 Defaults live in one place (`application/context/summary-settings.ts`) and are exported: `DEFAULT_SUMMARY_MESSAGE_PREFIX`, `DEFAULT_SUMMARY_PROMPT`, `buildSummaryPrompt(conversation, prompt?)`.
 
@@ -115,6 +143,32 @@ Defaults live in one place (`application/context/summary-settings.ts`) and are e
 `getContextReal()`, `getContextDrift()` and the real meter are reset to "no data" after `loadHistory`, `summarize`, an auto-summary or a trim, because the last real request no longer matches the history.
 
 `chat()` returns `{ content, usage, contextUsage?, continuation? }` (`continuation` only with a continuation policy, see [Agent API](agent-api.md#continuation)). `usage` is billing for every tool round of the turn. `contextUsage` is the last request only, which is what occupies the window. The `context.usage` stream event carries the same per-request figures ([Streaming](streaming.md#event-types)).
+
+## Resolving the window
+
+`resolveContextWindow` finds the token window of a model from sources you provide and tells you which one answered. The library carries no catalog or table of its own: where the numbers come from is up to the host.
+
+```ts
+import { resolveContextWindow } from 'poyraz';
+
+const resolution = await resolveContextWindow({
+  model: profile.model,
+  host: profile.host,
+  provider: profile.provider,
+  catalog: (query) => myCatalog.contextLength(query.model),      // asked first: explicit override
+  providerCache: ollamaLengths,                                  // asked second: Record or Map keyed by model id
+  staticTable: new Map([['gpt-4o-mini', 128_000]]),              // asked last
+});
+
+agent.setContextWindow(resolution?.tokens); // or builder.ContextWindow(resolution.tokens)
+console.log(resolution?.source);            // 'catalog' | 'provider-cache' | 'static-table'
+```
+
+- Order: `catalog` → `providerCache` → `staticTable`. The first source with a valid value wins and the later ones are not asked.
+- Each source is a function `(query) => number | undefined` (sync or async; the query is `{ model, host?, provider? }`) or a table keyed by model id (`Record<string, number>` or `Map`).
+- A value counts only when it is a finite number of at least 1000 (the rule of `ContextWindow(...)`, exported as `normalizeContextWindow` / `MIN_CONTEXT_WINDOW_TOKENS`); it is rounded down. An absent source, `undefined` or an invalid number falls through to the next source.
+- The result is `{ tokens, source }`, or `undefined` when nothing resolved (then leave the window unset: token-based summarization stays off).
+- A source that throws or rejects makes the call reject; catch inside your function if the lookup is best-effort.
 
 ## Meter shape
 

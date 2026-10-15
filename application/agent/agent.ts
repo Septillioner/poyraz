@@ -1,5 +1,5 @@
 import { createLogger, logger, scopeToLogger, type Logger } from '../../shared/logger.js';
-import type { ChatMessage, LLMProvider, TokenUsage } from '../../domain/llm.js';
+import type { ChatMessage, LLMProvider, ReasoningConfig, ServiceTier, TokenUsage } from '../../domain/llm.js';
 import type { ModelProfile } from '../../domain/model-profile.js';
 import { createLLMProvider } from '../../infrastructure/llm/create-provider.js';
 import { inferProviderFromHost } from '../../domain/model-profile.js';
@@ -13,7 +13,13 @@ import {
 // own registry over it (presets / `WithTools` resolve against it); importing it selects nothing.
 import '../../tools/index.js';
 import { MCP_TOOL_PREFIX, resolveMcpToolPrefix } from '../../infrastructure/mcp/mcp-tool-bridge.js';
-import type { McpClientManager, McpServerState } from '../../infrastructure/mcp/mcp-client-manager.js';
+import type {
+  McpClientManager,
+  McpServerState,
+  McpSyncOptions,
+  McpSyncResult,
+} from '../../infrastructure/mcp/mcp-client-manager.js';
+import type { McpServerDef } from '../../domain/mcp.js';
 import { withRateLimitPolicy } from '../../infrastructure/llm/rate-limit.js';
 import type { ToolContext } from '../../tools/core/types.js';
 import type { ToolDefinition } from '../../tools/core/types.js';
@@ -26,6 +32,7 @@ import {
   realSnapshot,
 } from '../context/context-report.js';
 import { createTokenEstimator, type TokenEstimator } from '../context/token-estimate.js';
+import { MIN_CONTEXT_WINDOW_TOKENS, normalizeContextWindow } from '../context/context-window.js';
 import {
   emptyCategoryTokens,
   type CompiledRequest,
@@ -56,6 +63,9 @@ import {
 } from './tool-resolver.js';
 import {
   AgentConfigError,
+  normalizeMaxToolRounds,
+  normalizeReasoning,
+  normalizeServiceTier,
   resolveAgentPolicy,
   resolveRateLimitConfig,
   type ContinuationOutcome,
@@ -72,6 +82,10 @@ import {
 export type { AgentConfig };
 
 const MAX_CONTEXT_RECORDS = 20;
+
+function emptyMcpSync(): McpSyncResult {
+  return { added: [], changed: [], removed: [], unchanged: [], retried: [], states: [], tools: {} };
+}
 
 function toolSchemaCategory(
   name: string,
@@ -117,6 +131,8 @@ export class Agent {
   private builtPrompt?: BuiltSystemPrompt;
   private chatLogSource?: string;
   private activeAbortSignal?: AbortSignal;
+  /** Settings a running turn keeps even if a setter changes them meanwhile (the next turn sees the new ones). */
+  private turnSnapshot?: { contextWindowTokens: number | undefined };
   private readonly toolContext: ToolContext = {};
   /** Per-instance logger (level and file from `logging`); the shared `logger` is never reconfigured by an agent. */
   private logger: Logger = createLogger();
@@ -125,9 +141,12 @@ export class Agent {
   /** Created on demand when `mcp.enabled`; never the shared `mcpClientManager`. */
   private mcpManager?: McpClientManager;
   private mcpConnected = false;
+  /** Tail of the queue that runs connectMcp / syncMcp / disconnectMcp one after the other. */
+  private mcpQueue: Promise<unknown> = Promise.resolve();
 
   constructor(config: AgentConfig) {
-    this.config = config;
+    // A copy: the runtime setters never write into the object the caller passed in.
+    this.config = { ...config };
     this.name = config.name || 'Poyraz';
     this.model = config.model || undefined;
     this.options = config.options ? { ...config.options } : undefined;
@@ -188,6 +207,7 @@ export class Agent {
     this.summarize = scopeToLogger(this.logger, this.summarize.bind(this));
     this.connectMcp = scopeToLogger(this.logger, this.connectMcp.bind(this));
     this.disconnectMcp = scopeToLogger(this.logger, this.disconnectMcp.bind(this));
+    this.syncMcp = scopeToLogger(this.logger, this.syncMcp.bind(this));
   }
 
   /** Rate-limit settings after defaults; disabled (no waiting) unless `rateLimit.enabled` is true. */
@@ -217,7 +237,18 @@ export class Agent {
    * The agent owns its manager (no shared singleton). A server that fails to connect is reported in the
    * returned states and logged; it does not throw.
    */
-  async connectMcp(): Promise<McpServerState[]> {
+  connectMcp(): Promise<McpServerState[]> {
+    return this.exclusiveMcp(() => this.connectMcpNow());
+  }
+
+  /** Runs `task` after the earlier MCP operations of this agent; a failed one does not block the next. */
+  private exclusiveMcp<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.mcpQueue.then(task, task);
+    this.mcpQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async connectMcpNow(): Promise<McpServerState[]> {
     const mcp = this.config.mcp;
     if (mcp?.enabled !== true || !mcp.servers || Object.keys(mcp.servers).length === 0) return [];
     if (!this.mcpManager) {
@@ -237,10 +268,68 @@ export class Agent {
   }
 
   /** Removes this agent's MCP tools and closes its MCP connections. */
-  async disconnectMcp(): Promise<void> {
-    this.removeExternalTools(this.getMcpToolPrefix());
-    this.mcpConnected = false;
-    await this.mcpManager?.disconnectAll();
+  disconnectMcp(): Promise<void> {
+    return this.exclusiveMcp(async () => {
+      this.removeExternalTools(this.getMcpToolPrefix());
+      this.mcpConnected = false;
+      await this.mcpManager?.disconnectAll();
+    });
+  }
+
+  /**
+   * Makes this agent's MCP connections match `servers` (default: `config.mcp.servers`) and touches only
+   * what differs: new servers connect, servers whose definition changed reconnect, removed servers disconnect,
+   * identical ones keep their connection and their tool definitions. `config.mcp.servers` becomes `servers`, so a
+   * later `connectMcp()` reconnects the same list. Returns what was done per server id and the state of every
+   * requested server. A failing server does not throw: its state has `status: 'error'` and it is logged.
+   *
+   * With `mcp.enabled` not `true` it does nothing: nothing is created, connected or changed, and the result is
+   * empty. Calls run one after the other together with `connectMcp()` and `disconnectMcp()`.
+   */
+  syncMcp(servers?: Record<string, McpServerDef>, options?: McpSyncOptions): Promise<McpSyncResult> {
+    return this.exclusiveMcp(() => this.syncMcpNow(servers, options));
+  }
+
+  private async syncMcpNow(servers?: Record<string, McpServerDef>, options?: McpSyncOptions): Promise<McpSyncResult> {
+    const mcp = this.config.mcp;
+    if (mcp?.enabled !== true) return emptyMcpSync();
+    const wanted = { ...(servers ?? mcp.servers ?? {}) };
+    this.config.mcp = { ...mcp, servers: wanted };
+    if (!this.mcpManager) {
+      if (Object.keys(wanted).length === 0) return emptyMcpSync();
+      const { createMcpClientManager } = await import('../../infrastructure/mcp/mcp-client-manager.js');
+      this.mcpManager = createMcpClientManager({ toolPrefix: mcp.toolPrefix });
+    }
+    const manager = this.mcpManager;
+    const before = manager.getTools();
+    const result = await manager.sync(wanted, options);
+    // Only tools that went away or were replaced leave the agent; only new or replaced ones are merged in.
+    this.dropExternalTools(Object.keys(before).filter((name) => result.tools[name] !== before[name]));
+    const fresh = Object.entries(result.tools).filter(([name, tool]) => before[name] !== tool);
+    if (fresh.length > 0) this.mergeExternalTools(Object.fromEntries(fresh));
+    this.mcpConnected = true;
+    const touched = new Set([...result.added, ...result.changed, ...result.retried]);
+    for (const state of result.states) {
+      if (touched.has(state.id) && state.status === 'error') {
+        logger.warn('MCP server failed to connect', { server: state.id, error: state.error });
+      }
+    }
+    return result;
+  }
+
+  private dropExternalTools(names: string[]): void {
+    if (names.length === 0) return;
+    const drop = new Set(names);
+    const next: Record<string, ToolDefinition> = {};
+    for (const [name, tool] of Object.entries(this.baseTools)) {
+      if (drop.has(name)) {
+        this.toolRegistry.unregister(name);
+        continue;
+      }
+      next[name] = tool;
+    }
+    this.baseTools = next;
+    this.applyPolicy();
   }
 
   private summaryEnabled(): boolean {
@@ -304,6 +393,8 @@ export class Agent {
     this.policyConfig.deniedTools = resolvePolicyDenied(Object.keys(this.baseTools), this.policy);
     this.policyConfig.deniedToolReason = this.policy.deniedToolReason;
     this.policyConfig.perTurnToolLimits = this.policy.perTurnToolLimits;
+    // A policy swapped with setPolicy brings its own `maxToolRounds` (top-level setting > policy > routingPolicy > options > 10).
+    this.policyConfig.maxToolRounds = resolveMaxToolRounds({ ...this.config, policy: this.policy });
   }
 
   /** This agent's tool registry (layered over the shared one): where merged external tools are registered. */
@@ -623,6 +714,76 @@ export class Agent {
     return this.config;
   }
 
+  // --- Runtime settings: take effect from the next turn; a running turn keeps the values it started with ---
+
+  getReasoning(): ReasoningConfig | undefined {
+    return this.config.reasoning ? { ...this.config.reasoning } : undefined;
+  }
+
+  /** `{ effort }` for the next turns; `undefined` (or no effort) clears it. An unknown effort throws `AgentConfigError`. */
+  setReasoning(config?: ReasoningConfig): void {
+    const reasoning = normalizeReasoning(config);
+    if (reasoning) this.config.reasoning = reasoning;
+    else delete this.config.reasoning;
+  }
+
+  getServiceTier(): ServiceTier | undefined {
+    return this.config.serviceTier;
+  }
+
+  /** Service tier for the next turns; `undefined` clears it. An unknown tier throws `AgentConfigError`. */
+  setServiceTier(tier?: ServiceTier): void {
+    const next = normalizeServiceTier(tier);
+    if (next) this.config.serviceTier = next;
+    else delete this.config.serviceTier;
+  }
+
+  getContextWindow(): number | undefined {
+    return this.config.contextWindowTokens;
+  }
+
+  /**
+   * Token window for the meter and for token-based summarization; `undefined` clears it (no token
+   * pressure, no percentage). Rounded down; a value `ContextWindow(...)` would ignore (non-finite or
+   * below 1000) throws `AgentConfigError`. A turn in progress keeps the window it started with.
+   */
+  setContextWindow(tokens?: number): void {
+    if (tokens === undefined) {
+      delete this.config.contextWindowTokens;
+      return;
+    }
+    const window = normalizeContextWindow(tokens);
+    if (window === undefined) {
+      throw new AgentConfigError(
+        `Invalid context window: ${String(tokens)} (expected a finite number of at least ${MIN_CONTEXT_WINDOW_TOKENS})`
+      );
+    }
+    this.config.contextWindowTokens = window;
+  }
+
+  /** The tool round budget a new turn gets (default 10). */
+  getMaxToolRounds(): number {
+    return this.policyConfig.maxToolRounds;
+  }
+
+  /**
+   * Tool round budget per turn. `undefined` clears the top-level value, so the budget falls back to
+   * `policy.maxToolRounds`, `routingPolicy`, `options.max_tool_rounds`, then 10. Rounded down; a non-positive or
+   * non-finite value throws `AgentConfigError`.
+   */
+  setMaxToolRounds(rounds?: number): void {
+    if (rounds === undefined) {
+      delete this.config.maxToolRounds;
+    } else {
+      const next = normalizeMaxToolRounds(rounds);
+      if (next === undefined) {
+        throw new AgentConfigError(`Invalid max tool rounds: ${String(rounds)} (expected a positive finite number)`);
+      }
+      this.config.maxToolRounds = next;
+    }
+    this.policyConfig.maxToolRounds = resolveMaxToolRounds({ ...this.config, policy: this.policy });
+  }
+
   getMessageHistory(): ChatMessage[] {
     return this.context.getMessagesCopy();
   }
@@ -641,6 +802,9 @@ export class Agent {
       prefix: summarization?.prefix,
       keepRatio: summarization?.keepRatio,
       toolResultMaxChars: summarization?.toolResultMaxChars,
+      onSummarized: summarization?.onSummarized
+        ? (summarized) => summarization.onSummarized!({ ...summarized, sessionId: this.sessionId })
+        : undefined,
     });
     // The last real request described the history from before the summary.
     this.lastRealRecord = undefined;
@@ -651,9 +815,14 @@ export class Agent {
     const promptTokens = lastUsage ? lastUsage.promptTokens : undefined;
     return shouldSummarizeByTokens({
       promptTokens,
-      contextWindowTokens: this.config.contextWindowTokens,
+      contextWindowTokens: this.contextWindowForDecision(),
       summaryThresholdRatio: normalizeSummaryThreshold(this.summaryThresholdRatio()),
     });
+  }
+
+  /** The window summarization decisions use: the one a running turn started with, else the current one. */
+  private contextWindowForDecision(): number | undefined {
+    return this.turnSnapshot ? this.turnSnapshot.contextWindowTokens : this.config.contextWindowTokens;
   }
 
   /**
@@ -691,6 +860,7 @@ export class Agent {
     this.stats.resetCurrent();
     this.lastRequestUsage = undefined;
     this.activeAbortSignal = handlers?.signal;
+    this.turnSnapshot = { contextWindowTokens: this.config.contextWindowTokens };
 
     logger.info('User message received', { agent: this.name, input: userInput });
 
@@ -706,7 +876,7 @@ export class Agent {
           provider: this.provider,
           model: this.model,
           options: this.options,
-          policy: this.policyConfig,
+          policy: { ...this.policyConfig },
           promptCacheKey: this.getPromptCacheKey(),
           promptCacheRetention: this.config.promptCacheRetention,
           reasoning: this.config.reasoning,
@@ -716,6 +886,7 @@ export class Agent {
           sameToolBreaker: this.config.sameToolBreaker,
           progressTools: this.config.progressTools,
           continuation: this.config.continuation,
+          toolResultLimit: { maxChars: this.config.toolResultMaxChars, maxBytes: this.config.toolResultMaxBytes },
         },
         this.tools,
         policyGuard,
@@ -745,7 +916,7 @@ export class Agent {
         () => this.summarize(handlers),
         {
           promptTokens: this.getContextUsage()?.promptTokens,
-          contextWindowTokens: this.config.contextWindowTokens,
+          contextWindowTokens: this.contextWindowForDecision(),
           summaryThresholdRatio: normalizeSummaryThreshold(this.summaryThresholdRatio()),
         }
       );
@@ -766,6 +937,7 @@ export class Agent {
       throw error;
     } finally {
       this.activeAbortSignal = undefined;
+      this.turnSnapshot = undefined;
       if (this.config.logging?.chatDebugLog) {
         void writeChatDebugLog({
           timestamp: new Date().toISOString(),

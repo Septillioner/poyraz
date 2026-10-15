@@ -11,6 +11,7 @@ import type { ToolPolicyGuard } from './tool-policy.js';
 import { tryParseToolError } from './tool-errors.js';
 import { executeToolCall, parseRawToolArgs } from './tool-execution.js';
 import type { RepairOptions } from './repair-instruction.js';
+import type { ToolResultLimit } from './tool-result-limit.js';
 import type { ToolDefinition } from '../../tools/core/types.js';
 import type {
   ContinuationDecision,
@@ -67,6 +68,8 @@ export interface DecisionLoopDeps {
   agentPolicy: AgentPolicy;
   /** `config.repair`. Failed tool results carry repair text only when `enabled`. */
   repair?: RepairOptions;
+  /** `toolResultMaxChars` / `toolResultMaxBytes`. Tool results are cut to it; omitted -> no limit. */
+  toolResultLimit?: ToolResultLimit;
   /** `config.sameToolBreaker`. Off unless `enabled: true`. */
   sameToolBreaker?: SameToolBreakerConfig;
   /**
@@ -422,7 +425,7 @@ export async function runDecisionLoop(
           policyGuard,
           { ...toolCall, id: toolCallId },
           handlers.buildToolContext(),
-          { repair: deps.repair }
+          { repair: deps.repair, resultLimit: deps.toolResultLimit }
         );
 
         const parsedError = tryParseToolError(toolOutcome.message.content);

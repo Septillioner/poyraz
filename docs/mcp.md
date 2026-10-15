@@ -93,6 +93,56 @@ for (const { id, error } of failed) console.warn(`MCP ${id}: ${error}`);
 
 What does still throw: a programming or environment fault outside any server (for example the MCP SDK failing to load). A server that accepts the connection but never answers waits for the MCP SDK's own request timeout (60 s by default) before it is reported as an `error`.
 
+## Sync: reconnect only what changed
+
+`connectAll` / `connectMcp()` drop every connection and start over. When a server list is edited (a host settings screen, for example), that restarts servers that did not change. `sync` compares the new list with the current connections and touches only the difference:
+
+```ts
+// On an agent (needs mcp.enabled: true)
+const result = await agent.syncMcp(nextServers);          // nextServers defaults to config.mcp.servers
+const again = await agent.syncMcp(nextServers, { retryFailed: true });
+
+// On a manager of your own
+const manager = createMcpClientManager();
+const synced = await manager.sync(nextServers);
+agent.mergeExternalTools(synced.tools);
+```
+
+Signatures:
+
+```ts
+agent.syncMcp(servers?: Record<string, McpServerDef>, options?: McpSyncOptions): Promise<McpSyncResult>
+manager.sync(servers: Record<string, McpServerDef>, options?: McpSyncOptions): Promise<McpSyncResult>
+
+interface McpSyncOptions {
+  retryFailed?: boolean; // also reconnect unchanged servers whose last attempt failed. Default false
+}
+
+interface McpSyncResult {
+  added: string[];      // not known before: connected (or recorded as 'disabled')
+  changed: string[];    // definition changed: disconnected, then connected with the new one
+  removed: string[];    // no longer in the list: disconnected and forgotten
+  unchanged: string[];  // identical definition: not touched
+  retried: string[];    // unchanged but failed before, reconnected (retryFailed)
+  states: McpServerState[]; // state of every requested server, in request order
+  tools: Record<string, ToolDefinition>; // bridged tools of all connected servers
+}
+```
+
+Rules:
+
+- **Equality** is by value, independent of key order (`env`, `headers`, `args` entries of an object), so an edited-and-saved-again server is `unchanged`. Order inside `args` matters. `disabled: false` and `ignoreCertificate: false` equal leaving them out. Any other difference (`url`, `headers`, `command`, `args`, `env`, `cwd`, `disabled`, `ignoreCertificate`) makes the server `changed`.
+- **Unchanged servers are not touched**: same connection, same tool definition objects, nothing is closed or reopened. On an agent, their tools stay registered as they are.
+- **`ignoreCertificate`** keeps working per server and stays opt-in: it is part of the definition, so switching it reconnects that server only, and only a server that sets it `true` skips TLS verification.
+- **Errors do not throw.** A server that fails to connect has `status: 'error'` and an `error` text in `states`, and the agent logs `MCP server failed to connect` for servers it tried in this call. The others still connect. A failed server whose definition did not change is **not** retried by a later `sync` unless `retryFailed: true` (so an unrelated edit does not hammer a broken server); a changed definition always reconnects.
+- **Concurrent calls are serialized.** Calls on one manager (`sync`, `connectAll`, `connect`, `disconnect`, `disconnectAll`) run one after the other in call order; a call that fails does not block the next. On an agent, `connectMcp()`, `syncMcp()` and `disconnectMcp()` share one queue the same way, so their effects never interleave.
+- **`mcp.enabled` off** (missing, `false`, or `mcp` not set): `agent.syncMcp(...)` does nothing. It creates no manager, connects nothing, leaves `config.mcp` unchanged and returns an empty result (`added`, `changed`, `removed`, `unchanged`, `retried`, `states` empty, `tools: {}`). Connections that already exist are not closed by it; `disconnectMcp()` does that. With `enabled: true` and no servers, a first `syncMcp()` also creates nothing.
+- **`config.mcp.servers`** becomes the synced list on an agent, so a later `connectMcp()` reconnects the same set. `toolPrefix` is unchanged.
+- **Tools on the agent**: tools of `removed` servers (and the old tools of `changed` ones) are removed from the agent, new ones are merged. Tools you merged yourself with another prefix are left alone.
+- `manager.connectAll(servers)` records the definitions too, so a `sync` after it sees those servers as `unchanged`. `manager.disconnect(id)` now also forgets the server's state.
+
+The shared host pattern (reconnect everything whenever the list changes) becomes `await agent.syncMcp(servers)`; the host no longer needs a `connectedKey`.
+
 ## Status
 
 ```ts

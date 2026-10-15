@@ -20,10 +20,12 @@ export type {
   RateLimitConfig,
   RepairConfig,
   ResolvedRateLimitConfig,
+  OnSummarizedHook,
   SameToolBreakerConfig,
   Skill,
   SkillToolConfig,
   SummarizationConfig,
+  SummarizedContext,
   SummaryPromptBuilder,
 } from './application/agent/config.js';
 export type { ToolRoutingPolicy } from './application/chat/tool-policy.js';
@@ -33,6 +35,8 @@ export type { BuiltSystemPrompt } from './application/prompt/system-prompt.js';
 
 export {
   DEFAULT_AGENT_POLICY,
+  matchesAnyToolPattern,
+  matchesToolPattern,
   resolvePolicyDenied,
   resolvePolicyTools,
   type AgentPolicy,
@@ -236,6 +240,8 @@ export {
   type McpClientManagerOptions,
   type McpConnectionStatus,
   type McpServerState,
+  type McpSyncOptions,
+  type McpSyncResult,
 } from './infrastructure/mcp/mcp-client-manager.js';
 export {
   MCP_TOOL_PREFIX,
@@ -247,6 +253,27 @@ export {
 export { builtinRepairResolvers } from './application/chat/repair-instruction.js';
 export type { RepairInput, RepairOptions, RepairResolver } from './application/chat/repair-instruction.js';
 export type { ToolExecutionOptions } from './application/chat/tool-execution.js';
+export { limitToolResult } from './application/chat/tool-result-limit.js';
+export type { LimitedToolResult, ToolResultLimit, ToolResultTruncation } from './application/chat/tool-result-limit.js';
+
+export {
+  isToolUseUnsupportedError,
+  ToolUseUnsupportedError,
+  TOOL_USE_UNSUPPORTED_CODE,
+} from './infrastructure/llm/tool-use-unsupported.js';
+
+export {
+  MIN_CONTEXT_WINDOW_TOKENS,
+  normalizeContextWindow,
+  resolveContextWindow,
+} from './application/context/context-window.js';
+export type {
+  ContextWindowLookup,
+  ContextWindowQuery,
+  ContextWindowResolution,
+  ContextWindowSource,
+  ResolveContextWindowOptions,
+} from './application/context/context-window.js';
 
 export { setActiveWorkspaceRoot } from './tools/core/shell-session.js';
 

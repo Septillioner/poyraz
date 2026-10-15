@@ -83,7 +83,9 @@ export function createMessageContext(options: ContextOptions): MessageContext {
     const pinnedSystem = hasPinnedSystem(messages);
     const minIndex = pinnedSystem ? 1 : 0;
     let keptTurns = 0;
-    let cutIndex = messages.length;
+    // Fewer conversation turns than `keepTurns`: everything stays, so the cut sits at the start
+    // (nothing to summarize or trim) instead of past the end of the history.
+    let cutIndex = minIndex;
 
     for (let i = messages.length - 1; i >= minIndex; i--) {
       if (messages[i].role === 'user' || messages[i].role === 'assistant') {

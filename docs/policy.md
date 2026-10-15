@@ -24,7 +24,7 @@ const agent = new AgentBuilder()
 
 | Where | How |
 |-------|-----|
-| Builder | `Policy(config)` replaces the whole section. `AllowedTools(list \| 'all')`, `ErrorBreaker(mode)`, `ResponseGates(...gates)` and `PerTurnToolLimits(map)` change one field and keep the rest |
+| Builder | `Policy(config)` replaces the whole section (it is also how `deniedTools` and `maxToolRounds` are set). `AllowedTools(list \| 'all')`, `DeniedTools(...names)`, `ErrorBreaker(mode)`, `ResponseGates(...gates)` and `PerTurnToolLimits(map)` change one field and keep the rest |
 | Config / JSON | `policy` field of `AgentConfig`, `AgentTemplate` (without `responseGates`, which are code) and `FromJSON` |
 | Runtime | `agent.setPolicy(policy)` swaps the active policy; `agent.getPolicy()` reads it. The allowed tool set and the tool schemas sent to the model follow immediately |
 
@@ -37,7 +37,9 @@ The policy filters the tools the agent already has. It never adds one. A bare ag
 | Field | Default | Role |
 |-------|---------|------|
 | `id` | `'default'` | Stable policy id. It appears in logs; hosts may use it as their own label |
-| `allowedTools` | `'all'` | `'all'` or an allow-list of tool names. A tool outside the list is not sent to the model and is denied if called. Include `load_skill` (or your `skillTool.toolName`) if the agent has skills |
+| `allowedTools` | `'all'` | `'all'` or an allow-list. Each entry is a tool name or a [pattern](#tool-name-patterns) (`'mcp_*'`). A tool outside the list is not sent to the model and is denied if called. Include `load_skill` (or your `skillTool.toolName`) if the agent has skills |
+| `deniedTools` | none | Tools that are never available, whatever `allowedTools` says. Same entry syntax (names or patterns). Deny wins over allow. See [Tool name patterns](#tool-name-patterns) |
+| `maxToolRounds` | none | Tool round budget of a turn under this policy. Precedence: top-level `MaxToolRounds(n)` > `policy.maxToolRounds` > `RoutingPolicy({ maxToolRounds })` > `options.max_tool_rounds` > 10. A value that is not a positive number counts as "not set" |
 | `hardBlockDeniedTools` | `false` | Opt-in for the hard path of the loop breakers. When true, a tripped breaker takes the hard path (the error breaker in `'hard'` mode, or the [same-tool breaker](#related-loop-settings)): it adds a `NOTICE` user message and drops the `tool_calls` of the following replies, so the turn ends in text. When false, a tripped breaker only adds a `<system_reminder>` and the loop goes on |
 | `deniedToolReason` | built-in text | Message returned to the model when it calls a denied tool. The result carries the error code `POLICY_BLOCKED` |
 | `errorBreaker` | `'off'` | Same-error circuit breaker: `'off'` (never counted, nothing injected), `'soft'` (after the same error repeats, a `<system_reminder>` notice is added; the history stays provider-valid) or `'hard'` (legacy: only takes the hard path together with `hardBlockDeniedTools: true`, otherwise it behaves like `'soft'`). The streak is the same tool, error code and message twice in a row. Prefer `'soft'` |
@@ -45,7 +47,35 @@ The policy filters the tools the agent already has. It never adds one. A bare ag
 | `perTurnToolLimits` | none | Cap on successful calls per tool within one user turn, e.g. `{ edit_file: 1 }`. Further calls get a `POLICY_BLOCKED` result; the counters reset at the start of every `chat()` |
 | `responseGates` | none | Ordered gates evaluated before a text-only reply is accepted (see [ResponseGate](#responsegate)). Code only: not part of `AgentTemplate` / JSON |
 
-`resolvePolicyTools(baseTools, policy)` and `resolvePolicyDenied(baseTools, policy)` return the allowed and the denied names for a list of tool names. Anything that is not an explicit list leaves every tool allowed.
+`resolvePolicyTools(baseTools, policy)` and `resolvePolicyDenied(baseTools, policy)` return the allowed and the denied names for a list of tool names. Anything that is not an explicit list leaves every tool allowed; `deniedTools` is applied after the allow-list.
+
+### Tool name patterns
+
+Entries of `allowedTools` and `deniedTools` are an exact tool name or a pattern in which `*` stands for any run of characters (including none). Everything else is literal and matching is case-sensitive: there is no `?`, no character class and no regular-expression syntax.
+
+| Entry | Matches |
+|-------|---------|
+| `'read_file'` | exactly `read_file` |
+| `'mcp_*'` | every name starting with `mcp_` (for example all bridged MCP tools; the default MCP prefix is `mcp_`) |
+| `'*_read'` | every name ending with `_read` |
+| `'mcp_fs_*_read'` | prefix and suffix together |
+| `'*'` | every tool (in `deniedTools` this denies all of them) |
+
+```ts
+new AgentBuilder()
+  .Provider(provider)
+  .Policy({
+    id: 'mcp-readonly',
+    allowedTools: ['load_skill', 'mcp_*'],  // the skill tool and every MCP tool ...
+    deniedTools: ['mcp_*_write', 'mcp_*_delete'], // ... except the mutating ones
+    maxToolRounds: 20,                       // this policy's round budget
+  })
+  .Build();
+```
+
+The patterns are evaluated against the tools the agent has when the policy is applied, so a tool merged later (`mergeExternalTools`) is filtered the same way. `matchesToolPattern(pattern, toolName)` and `matchesAnyToolPattern(patterns, toolName)` expose the matcher for hosts that want the same rule outside the agent.
+
+The round budget follows the active policy: a policy swapped with `setPolicy` brings its own `maxToolRounds` for the next turn (precedence: top-level `MaxToolRounds(n)` / `setMaxToolRounds(n)` > `policy.maxToolRounds` > `RoutingPolicy({ maxToolRounds })` > `options.max_tool_rounds` > 10; a `setPolicy` without `maxToolRounds` falls back down that list).
 
 ## Related loop settings
 
@@ -56,7 +86,7 @@ These are not part of `AgentPolicy`; they have their own builder methods (and `A
 | `Repair(config \| boolean = true)` | Repair text appended to failed tool results. Off by default; see [Repair](#repair) |
 | `SameToolBreaker({ enabled, limit })` | Off by default. After `limit` (default 3) consecutive rounds led by the same tool, a notice is injected: a `<system_reminder>` normally, a hard stop with `hardBlockDeniedTools: true` |
 | `ProgressTools(...names)` | Default: none. A round in which one of these tools succeeded, without leading the round, resets the same-tool streak. A failed call is not progress |
-| `MaxToolRounds(n)` / `RepeatCallLimit(n)` | Tool round budget per turn (default 10) and identical tool+args limit (default 2). Precedence: top-level value > `RoutingPolicy({ maxToolRounds, repeatCallLimit })` > `options.max_tool_rounds` / `options.repeat_call_limit` |
+| `MaxToolRounds(n)` / `RepeatCallLimit(n)` | Tool round budget per turn (default 10) and identical tool+args limit (default 2). Precedence of the round budget: top-level value > `policy.maxToolRounds` > `RoutingPolicy({ maxToolRounds })` > `options.max_tool_rounds`; `repeatCallLimit`: top-level value > `RoutingPolicy({ repeatCallLimit })` > `options.repeat_call_limit` |
 | `Continuation(...policies)` | Host-defined "should this reply be followed by another round" rules; see [Continuation](#continuation) |
 
 The library has no hard-coded progress tools and no module-level switches: every breaker is read from the config of the agent.

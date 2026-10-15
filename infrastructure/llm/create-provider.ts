@@ -11,6 +11,7 @@ import {
 } from '../../domain/model-profile.js';
 import { GeminiProvider } from './gemini-provider.js';
 import { OllamaProvider, OpenAIProvider } from './providers.js';
+import { withToolUseClassification } from './tool-use-unsupported.js';
 
 export interface CreateProviderOptions {
   /**
@@ -20,11 +21,19 @@ export interface CreateProviderOptions {
   rateLimit?: RateLimitPolicy;
 }
 
+/**
+ * Built-in provider for a profile. A rejection that means "this model cannot use tools" surfaces as
+ * `ToolUseUnsupportedError` (the provider's own error is its `cause`).
+ */
 export function createLLMProvider(
   profile: ModelProfile,
   apiKey?: string,
   options: CreateProviderOptions = {}
 ): LLMProvider {
+  return withToolUseClassification(buildProvider(profile, apiKey, options));
+}
+
+function buildProvider(profile: ModelProfile, apiKey: string | undefined, options: CreateProviderOptions): LLMProvider {
   const { rateLimit } = options;
   if (profile.provider === 'llamacpp') {
     return new OpenAIProvider(

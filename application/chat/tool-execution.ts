@@ -17,6 +17,7 @@ import {
   resolveRepairMaxAttempts,
   type RepairOptions,
 } from './repair-instruction.js';
+import { isToolResultLimitActive, limitToolResult, type ToolResultLimit } from './tool-result-limit.js';
 
 export interface ToolExecutionOptions {
   /** Repair text on failed results. Omitted / not enabled -> failed results carry no `REPAIR:` text. */
@@ -26,6 +27,11 @@ export interface ToolExecutionOptions {
    * instead of the general `VALIDATION_ERROR`. Defaults to `DEFAULT_MISSING_ARG_NAMES`; `[]` turns it off.
    */
   missingArgNames?: readonly string[];
+  /**
+   * Size limit of the result message. Omitted / without a usable field -> results pass on unchanged.
+   * A longer result is cut and ends with a `[truncated: ...]` note; the call meta then carries `toolResultTruncated`.
+   */
+  resultLimit?: ToolResultLimit;
 }
 
 /** Legacy default of `ToolExecutionOptions.missingArgNames`. Keyed by argument name, not by tool name. */
@@ -123,6 +129,24 @@ export async function executeToolCall(
   toolCall: any,
   context: ToolContext,
   options: ToolExecutionOptions = {}
+): Promise<ToolCallOutcome> {
+  const outcome = await runToolCall(tools, policyGuard, toolCall, context, options);
+  if (!isToolResultLimitActive(options.resultLimit)) return outcome;
+  const limited = limitToolResult(outcome.message.content, options.resultLimit);
+  if (!limited.truncation) return outcome;
+  logger.warn('Tool result truncated', { toolName: toolCall.function?.name, ...limited.truncation });
+  return {
+    message: { ...outcome.message, content: limited.content },
+    meta: { ...outcome.meta, toolResultTruncated: limited.truncation },
+  };
+}
+
+async function runToolCall(
+  tools: Record<string, ToolDefinition>,
+  policyGuard: ToolPolicyGuard,
+  toolCall: any,
+  context: ToolContext,
+  options: ToolExecutionOptions
 ): Promise<ToolCallOutcome> {
   const repair = options.repair;
   const missingArgNames = options.missingArgNames ?? DEFAULT_MISSING_ARG_NAMES;

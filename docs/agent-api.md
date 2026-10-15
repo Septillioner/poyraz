@@ -93,6 +93,7 @@ The builder resolves presets, `WithTools` and `WithoutTools` into one `tools` ma
 | `ContextWindow(tokens)` | Token window for meter percentages and token-based summarization. Ignored below 1000 |
 | `TokenEstimator(options)` | Tune the local estimator (`charsPerToken`, `messageOverheadTokens`). See [Context](context.md#configuration) |
 | `Summarization(config \| boolean)` | `{ enabled, thresholdRatio, keepRatio, prompt, prefix, toolResultMaxChars }`. `true` / `false` only toggles `enabled`. Off by default |
+| `OnSummarized(hook?)` | Post-summary hook (`summarization.onSummarized`); its returned text is appended to the summary message. See [After-summary hook](context.md#after-summary-hook) |
 | `AutoSummary(enabled = true)` | Legacy shortcut (`autoSummary`); `summarization.enabled` wins when both are set |
 | `AutoSummaryThreshold(ratio)` | Legacy shortcut (`summaryThresholdRatio`); `summarization.thresholdRatio` wins when both are set. Clamped to 0.5..0.95 |
 
@@ -117,9 +118,10 @@ Hosts that persisted history with the old Turkish prefix (`Önceki konuşmaları
 | `MaxToolRounds(n)` / `RepeatCallLimit(n)` | Tool round budget per turn (default **10**) and identical tool+args limit (default **2**). They win over `RoutingPolicy` and over `options.max_tool_rounds` / `options.repeat_call_limit` |
 | `Repair(config \| boolean = true)` | `{ enabled, maxAttempts, resolvers, generic }`. Off by default. When on, a failed tool result carries a short repair instruction (at most `maxAttempts`, default 3, per identical call signature). The default text is a neutral generic one. `resolvers` maps a tool name to its own text builder (`(input) => string \| undefined`; `undefined` falls back to the generic text), `generic` replaces the generic text. Both are code-only. The tool-specific texts for the built-in `edit_file`, `run_terminal_cmd` and `grep` are opt-in: `Repair({ enabled: true, resolvers: builtinRepairResolvers })` (or pick entries) |
 | `SameToolBreaker(config \| boolean = true)` | `{ enabled, limit }`. Off by default. After `limit` (default 3) consecutive rounds led by the same tool, a notice is injected |
+| `ToolResultMaxChars(n)` / `ToolResultMaxBytes(n)` | Longest tool result in characters / UTF-8 bytes. Off by default: without them a result reaches the model as the tool returned it. A longer result is cut at the end and gets a `[truncated: ...]` note (the note counts against the limit; both limits apply when both are set). The call meta carries `toolResultTruncated` (`originalChars`, `originalBytes`, `keptChars`, `keptBytes`). Also `toolResultMaxChars` / `toolResultMaxBytes` in the config and in `FromJSON`. Invalid values (`<= 0`, `NaN`) are ignored |
 | `ProgressTools(...names)` | Tools whose success counts as progress for the same-tool breaker: a round where one succeeded without leading the round resets the streak. Default: none |
 | `Policy(config)` | The [agent policy](policy.md) (tool allow-list, error breaker, gates, per-turn limits) |
-| `AllowedTools(list \| 'all')`, `ErrorBreaker(mode)`, `ResponseGates(...gates)`, `PerTurnToolLimits(map)` | Single-field shortcuts into `policy` |
+| `AllowedTools(list \| 'all')`, `DeniedTools(...names)`, `ErrorBreaker(mode)`, `ResponseGates(...gates)`, `PerTurnToolLimits(map)` | Single-field shortcuts into `policy` |
 | `Continuation(...policies)` | See [Continuation](#continuation) |
 
 ### MCP, rate limit and logging
@@ -224,6 +226,7 @@ const { content, usage, contextUsage, continuation } = await agent.chat(userInpu
 | Method | Description |
 |--------|-------------|
 | `connectMcp()` / `disconnectMcp()` | Connect the `mcp.servers` of this agent (`init()` does it once) / remove its tools and close the connections. `connectMcp()` does not throw when a server fails: it returns the server states and the failed one has `status: 'error'` (see [Connection errors do not throw](mcp.md#connection-errors-do-not-throw)) |
+| `syncMcp(servers?, options?)` | Makes the MCP connections match `servers` (default `mcp.servers`) and reconnects only what changed. Returns `McpSyncResult`; a failing server does not throw. Does nothing when `mcp.enabled` is not `true`. Serialized with `connectMcp()` / `disconnectMcp()` (see [Sync](mcp.md#sync-reconnect-only-what-changed)) |
 | `getMcpStates()` | Per-server state of this agent's own manager |
 | `getMcpToolPrefix()` | Prefix of bridged tool names (`mcp.toolPrefix`, default `mcp_`) |
 | `getRateLimitConfig()` | `ResolvedRateLimitConfig` after defaults (`enabled: false`, `maxWaits: 0` when off) |
@@ -238,6 +241,25 @@ const { content, usage, contextUsage, continuation } = await agent.chat(userInpu
 | `setSessionId(id)` / `getSessionId()` | Session id (handed to tools and to the continuation policy; shell tools keep their cwd per session) |
 | `getApiKeyPreview()` | Masked key preview or `null` |
 | `getConfig()` | Current `AgentConfig` |
+
+### Runtime settings
+
+Change these on a live agent without rebuilding it. The new value applies **from the next turn**: a turn that is running keeps the reasoning, service tier, tool round budget and context window it started with (reasoning and tier are read once per turn; the window is read at each summarization decision of the turn from a snapshot taken when it began). `getConfig()` reflects the current values, and the agent works on its own copy of the config: the object you passed to `new Agent(...)` is never modified.
+
+| Method | Description |
+|--------|-------------|
+| `getReasoning()` / `setReasoning(config?)` | `{ effort }`. `undefined`, or a config without an effort, clears it. An unknown effort throws `AgentConfigError` |
+| `getServiceTier()` / `setServiceTier(tier?)` | `default` \| `flex` \| `fast` \| `priority` \| `ultrafast`; `undefined` clears it. An unknown tier throws `AgentConfigError` |
+| `getContextWindow()` / `setContextWindow(tokens?)` | Token window for the meter and token-based summarization. Rounded down; `undefined` clears it (no token pressure, no percentage). A non-finite value or one below 1000 throws `AgentConfigError`, where the builder's `ContextWindow(...)` ignores it silently |
+| `getMaxToolRounds()` / `setMaxToolRounds(rounds?)` | Tool round budget per turn (default 10). Rounded down; `undefined` clears the top-level value so `policy.maxToolRounds`, `routingPolicy`, then `options.max_tool_rounds`, then 10 apply. A non-positive or non-finite value throws `AgentConfigError` |
+
+```ts
+agent.setReasoning({ effort: 'high' });
+agent.setContextWindow(window);   // e.g. from resolveContextWindow(...), see Context
+agent.setMaxToolRounds(40);
+```
+
+To find the window of a model, see [Resolving the window](context.md#resolving-the-window).
 
 ### History and usage
 

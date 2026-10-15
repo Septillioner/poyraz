@@ -136,6 +136,26 @@ const patient = createLLMProvider(profile, apiKey, { rateLimit: { enabled: true,
 
 Pass it with `.Provider(provider)`; the builder then needs no model or host. `ChatOptions.model` is optional, so a custom `LLMProvider` may receive requests without a `model` when you never call `Model(...)`; the built-in OpenAI-compatible providers then leave it out of the request and the endpoint's own default applies. Ollama and Gemini never wait on rate limits. `.RateLimit(...)` on the builder also works with an injected provider: the agent hands the policy to it on every call, and providers that implement waiting (`OpenAIProvider`) honor it.
 
+### Models without tool support
+
+A model (or route) that cannot take tools rejects a request that carries them: OpenRouter answers `No endpoints found that support tool use`, Ollama `... does not support tools`, OpenAI `'tools' is not supported with this model`, Gemini and Groq say function calling / tool use is not supported, llama.cpp `tools param requires --jinja flag`. Providers made by `createLLMProvider` (and so every provider an agent builds from a profile) turn such a rejection into one error type:
+
+```ts
+import { isToolUseUnsupportedError, ToolUseUnsupportedError, TOOL_USE_UNSUPPORTED_CODE } from 'poyraz';
+
+try {
+  await agent.chat(text);
+} catch (error) {
+  if (isToolUseUnsupportedError(error)) {
+    // error.code === 'TOOL_USE_UNSUPPORTED'; error.cause is the provider's own error;
+    // error.message is the provider's text; error.model / error.status when known.
+    // Retry the turn on an agent without tools.
+  } else throw error;
+}
+```
+
+`isToolUseUnsupportedError(error)` also recognizes the raw provider error (SDK errors with the text in `error.error.message`, OpenRouter's `metadata.raw`, or a `cause`), so it works with a custom provider you wrote. Authentication (401, 403), rate-limit (429) and abort errors are never reported as this. `ToolUseUnsupportedError` is not retried or hidden by the library: the host decides what to do.
+
 ## Switching models at runtime
 
 ```ts
