@@ -3,7 +3,8 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { runDecisionLoop, CONSECUTIVE_SAME_ERROR_LIMIT, ERROR_CIRCUIT_BREAKER_ENABLED, resolveErrorBreakerMode, SAME_TOOL_LOOP_BREAKER_ENABLED } from '../../application/chat/decision-loop.js';
+import { runDecisionLoop, CONSECUTIVE_SAME_ERROR_LIMIT, resolveErrorBreakerMode, type DecisionLoopDeps } from '../../application/chat/decision-loop.js';
+import { builtinRepairResolvers } from '../../application/chat/repair-instruction.js';
 import { createToolPolicyGuard } from '../../application/chat/tool-policy.js';
 import { createMessageContext } from '../../application/context/message-context.js';
 import {
@@ -64,7 +65,8 @@ describe('decision-loop tool error recovery', () => {
   function runLoop(
     provider: ReturnType<typeof mockLLM>,
     steps: Parameters<typeof mockLLM>[0],
-    agentPolicy: AgentPolicy = DEFAULT_AGENT_POLICY
+    agentPolicy: AgentPolicy = DEFAULT_AGENT_POLICY,
+    extraDeps: Partial<DecisionLoopDeps> = {}
   ) {
     const llm = provider ?? mockLLM(steps);
     const messageContext = createMessageContext({ limit: 50 });
@@ -73,7 +75,6 @@ describe('decision-loop tool error recovery', () => {
     const policyGuard = createToolPolicyGuard({
       maxToolRounds: 10,
       repeatCallLimit: 5,
-      deterministicMode: true,
     });
 
     return runDecisionLoop(
@@ -84,6 +85,7 @@ describe('decision-loop tool error recovery', () => {
         tools: toolRegistry.toOpenAISchemas(Object.keys(toolDefs)),
         policy: { maxToolRounds: 10 },
         agentPolicy,
+        ...extraDeps,
       },
       toolDefs,
       policyGuard,
@@ -108,10 +110,34 @@ describe('decision-loop tool error recovery', () => {
         },
         { content: 'Retrying with full content.' },
       ]),
-      []
+      [],
+      DEFAULT_AGENT_POLICY,
+      { repair: { enabled: true, resolvers: builtinRepairResolvers } }
     );
 
     expect(containsRepairFor(messages, 'edit_file')).toBe(true);
+  });
+
+  it('adds no REPAIR text to the same failure while repair is off (the default)', async () => {
+    const { messages } = await runLoop(
+      mockLLM([
+        {
+          tool_calls: [
+            toolCall('edit_file', {
+              target_file: 'sample.txt',
+              code_edit: 'partial snippet only',
+            }),
+          ],
+        },
+        { content: 'Retrying with full content.' },
+      ]),
+      []
+    );
+
+    const toolMessages = messages.filter((m) => m.role === 'tool');
+    expect(toolMessages).toHaveLength(1);
+    expect(toolMessages[0].content).toContain('"error"');
+    expect(toolMessages[0].content).not.toContain('REPAIR');
   });
 
   it('does not inject a NOTICE when the same error repeats while the breaker is off', async () => {
@@ -126,7 +152,6 @@ describe('decision-loop tool error recovery', () => {
 
     const notices = messages.filter((m) => m.role === 'user' && m.content.includes('NOTICE:'));
     expect(notices).toHaveLength(0);
-    expect(ERROR_CIRCUIT_BREAKER_ENABLED).toBe(false);
     expect(CONSECUTIVE_SAME_ERROR_LIMIT).toBe(2);
   });
 
@@ -218,7 +243,6 @@ describe('decision-loop tool error recovery', () => {
     expect(assistants[1].tool_calls).toHaveLength(1);
     expect(assistants[2].tool_calls).toBeUndefined();
     expect(assistants[2].content).toBe('Final text only.');
-    expect(ERROR_CIRCUIT_BREAKER_ENABLED).toBe(false);
   });
 
   it('never strips tool calls for a repeated read-only tool while the breaker is off', async () => {
@@ -238,8 +262,6 @@ describe('decision-loop tool error recovery', () => {
     ]);
 
     const { messages } = await runLoop(llm, [], HARD_BLOCK_POLICY);
-
-    expect(SAME_TOOL_LOOP_BREAKER_ENABLED).toBe(false);
 
     const sameToolNotices = messages.filter(
       (m) => m.role === 'user' && m.content.includes('times in a row')

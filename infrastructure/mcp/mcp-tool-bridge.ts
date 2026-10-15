@@ -9,9 +9,23 @@ const PROVIDER_TOOL_NAME_CHAR = /[^a-zA-Z0-9_-]/g;
 const COLLISION_SUFFIX_START = 2;
 const NAME_SEPARATOR = '__';
 
+/**
+ * Effective name prefix of bridged tools. A configured prefix (`mcp.toolPrefix`) is trimmed and
+ * limited to provider-safe characters; omitted or empty falls back to `MCP_TOOL_PREFIX`.
+ */
+export function resolveMcpToolPrefix(prefix?: string): string {
+  const cleaned = typeof prefix === 'string' ? providerSegment(prefix.trim()) : '';
+  return cleaned.length > 0 ? cleaned : MCP_TOOL_PREFIX;
+}
+
+/** True when `name` is a bridged MCP tool name for `prefix` (default `MCP_TOOL_PREFIX`). */
+export function isMcpToolName(name: string, prefix?: string): boolean {
+  return name.startsWith(resolveMcpToolPrefix(prefix));
+}
+
 /** Namespaces a server's tool name so ids from different servers never collide in the registry. */
-export function mcpToolName(serverId: string, toolName: string, used?: Set<string>): string {
-  const base = `${MCP_TOOL_PREFIX}${providerSegment(serverId)}${NAME_SEPARATOR}${providerSegment(toolName)}`;
+export function mcpToolName(serverId: string, toolName: string, used?: Set<string>, prefix?: string): string {
+  const base = `${resolveMcpToolPrefix(prefix)}${providerSegment(serverId)}${NAME_SEPARATOR}${providerSegment(toolName)}`;
   if (!used) return fitProviderToolName(base);
   let suffixNumber = COLLISION_SUFFIX_START;
   let candidate = fitProviderToolName(base);
@@ -53,8 +67,14 @@ function formatToolContent(content: unknown): string {
     .join('\n');
 }
 
-export function bridgeMcpTool(serverId: string, client: Client, tool: McpToolInfo, used?: Set<string>): ToolDefinition {
-  const name = mcpToolName(serverId, tool.name, used);
+export function bridgeMcpTool(
+  serverId: string,
+  client: Client,
+  tool: McpToolInfo,
+  used?: Set<string>,
+  prefix?: string
+): ToolDefinition {
+  const name = mcpToolName(serverId, tool.name, used, prefix);
 
   return {
     name,

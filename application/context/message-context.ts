@@ -1,10 +1,29 @@
 import type { ChatMessage } from '../../domain/llm.js';
+import type { MessageContextMeta } from '../../domain/context.js';
 import { logger } from '../../shared/logger.js';
-
-const KEPT_TURN_RATIO = 0.6;
+import {
+  buildMessageMeta,
+  indexToolCalls,
+  type CategorizeOptions,
+  type ToolNameIndex,
+} from './message-category.js';
+import type { MessageEntry } from './context-report.js';
+import { normalizeKeepRatio } from './summary-settings.js';
+import { createTokenEstimator, type TokenEstimator } from './token-estimate.js';
 
 export interface ContextOptions {
   limit?: number;
+  /** Estimator used for the token figures stored next to each message. */
+  estimator?: TokenEstimator;
+  /**
+   * Share of `limit` kept verbatim after a trim or summary (clamped to 0.1..0.9).
+   * Omitted -> 0.6. `getMessagesToSummarize(keepRatio)` can override it per call.
+   */
+  keepRatio?: number;
+  /** Prefix that marks a summary message in the context meter. Omitted -> the default summary prefix. */
+  summaryPrefix?: string;
+  /** Tool whose results are filed under `skills` in the context meter. Omitted -> `load_skill`. */
+  skillToolName?: string;
 }
 
 export interface MemoryUsage {
@@ -22,7 +41,12 @@ export interface MessageContext {
   getMemoryUsage(): MemoryUsage;
   shouldManage(): boolean;
   trim(): void;
-  getMessagesToSummarize(): { toSummarize: ChatMessage[]; keepIndex: number };
+  /** Messages to compact and the index where the verbatim tail starts. `keepRatio` overrides the context's own. */
+  getMessagesToSummarize(keepRatio?: number): { toSummarize: ChatMessage[]; keepIndex: number };
+  /** Category and size metadata assigned when the message was stored (built on demand for messages pushed around the API). */
+  getMessageMeta(message: ChatMessage): MessageContextMeta;
+  /** Every message with its metadata, in order. */
+  getMessageEntries(): MessageEntry[];
 }
 
 function hasTurnLimit(limit: number | undefined): limit is number {
@@ -35,6 +59,22 @@ function hasPinnedSystem(messages: ChatMessage[]): boolean {
 
 export function createMessageContext(options: ContextOptions): MessageContext {
   let messages: ChatMessage[] = [];
+  const estimator = options.estimator ?? createTokenEstimator();
+  const categorizeOptions: CategorizeOptions = {
+    summaryPrefix: options.summaryPrefix,
+    skillToolName: options.skillToolName,
+  };
+  const keepTurnsFor = (limit: number, keepRatio?: number): number =>
+    Math.max(1, Math.ceil(limit * normalizeKeepRatio(keepRatio ?? options.keepRatio)));
+  // Metadata follows the message object, so trimming, summarizing and re-ordering
+  // never need to re-index it.
+  const metaByMessage = new WeakMap<ChatMessage, MessageContextMeta>();
+  let toolNames: ToolNameIndex = new Map();
+
+  const store = (message: ChatMessage) => {
+    indexToolCalls(message, toolNames);
+    metaByMessage.set(message, buildMessageMeta(message, toolNames, estimator, categorizeOptions));
+  };
 
   const getConversationTurnCount = () =>
     messages.filter((m) => m.role === 'user' || m.role === 'assistant').length;
@@ -72,6 +112,7 @@ export function createMessageContext(options: ContextOptions): MessageContext {
 
   return {
     addMessage(message: ChatMessage) {
+      store(message);
       messages.push(message);
     },
     getMessages() {
@@ -82,9 +123,25 @@ export function createMessageContext(options: ContextOptions): MessageContext {
     },
     setMessages(newMessages: ChatMessage[]) {
       messages = [...newMessages];
+      toolNames = new Map();
+      for (const message of messages) store(message);
     },
     clear() {
       messages = [];
+      toolNames = new Map();
+    },
+    getMessageMeta(message: ChatMessage) {
+      return metaByMessage.get(message) ?? buildMessageMeta(message, toolNames, estimator, categorizeOptions);
+    },
+    getMessageEntries() {
+      const index: ToolNameIndex = new Map();
+      return messages.map((message) => {
+        indexToolCalls(message, index);
+        return {
+          message,
+          meta: metaByMessage.get(message) ?? buildMessageMeta(message, index, estimator, categorizeOptions),
+        };
+      });
     },
     getMemoryUsage() {
       const current = messages.filter((m) => m.role !== 'system').length;
@@ -108,7 +165,7 @@ export function createMessageContext(options: ContextOptions): MessageContext {
       if (turnCount <= options.limit) return;
 
       logger.info(`Trimming history (${turnCount} turns exceeds limit ${options.limit})...`);
-      const keepTurns = Math.ceil(options.limit * KEPT_TURN_RATIO);
+      const keepTurns = keepTurnsFor(options.limit);
       const cutIndex = findCutIndex(keepTurns);
       const recentMessages = messages.slice(cutIndex);
 
@@ -118,10 +175,10 @@ export function createMessageContext(options: ContextOptions): MessageContext {
         messages = recentMessages;
       }
     },
-    getMessagesToSummarize() {
+    getMessagesToSummarize(keepRatio?: number) {
       const startIndex = hasPinnedSystem(messages) ? 1 : 0;
       const keepIndex = hasTurnLimit(options.limit)
-        ? findCutIndex(Math.ceil(options.limit * KEPT_TURN_RATIO))
+        ? findCutIndex(keepTurnsFor(options.limit, keepRatio))
         : findLastUserIndex(startIndex);
 
       return {

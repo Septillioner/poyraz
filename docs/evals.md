@@ -9,6 +9,8 @@ The eval harness is **not** part of the npm package. It ships only in the git re
 
 If you only need to run agents in production, you can ignore this page.
 
+The runner builds its agent explicitly, because a clean `AgentBuilder()` has every feature off: it sets the system text, `Options({ temperature: 0.2 })`, the tool loop budget, repair, the same-tool breaker and the error breaker itself (see `evals/runner.ts`). Scenarios flagged `readOnly` run under a read-only `AgentPolicy` (only read, list and search tools, writes hard-blocked) and check that no file was written.
+
 ## Setup
 
 1. Clone the Poyraz repository.

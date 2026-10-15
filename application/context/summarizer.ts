@@ -2,33 +2,53 @@ import type { ChatHandlers } from '../../domain/events.js';
 import { emitEvent, rateLimitStreamEvent } from '../../domain/events.js';
 import type { ChatMessage, LLMProvider, ServiceTier } from '../../domain/llm.js';
 import { logger } from '../../shared/logger.js';
+import type { SummaryPromptBuilder } from '../agent/config.js';
 import type { MessageContext } from './message-context.js';
+import {
+  buildSummaryPrompt,
+  DEFAULT_SUMMARY_MESSAGE_PREFIX,
+  DEFAULT_SUMMARY_THRESHOLD_RATIO,
+  DEFAULT_SUMMARY_TOOL_RESULT_MAX_CHARS,
+  isSummaryMessage,
+  normalizeSummaryThreshold,
+  resolveSummaryPrefix,
+} from './summary-settings.js';
 
-export const SUMMARY_MESSAGE_PREFIX = 'Önceki konuşmaların özeti:';
+export {
+  DEFAULT_SUMMARY_MESSAGE_PREFIX,
+  DEFAULT_SUMMARY_THRESHOLD_RATIO,
+  isSummaryMessage,
+  normalizeSummaryThreshold,
+};
 
-export const DEFAULT_SUMMARY_THRESHOLD_RATIO = 0.8;
-const MIN_SUMMARY_THRESHOLD_RATIO = 0.5;
-const MAX_SUMMARY_THRESHOLD_RATIO = 0.95;
+/** Default prefix of the summary message (kept for existing imports; see `DEFAULT_SUMMARY_MESSAGE_PREFIX`). */
+export const SUMMARY_MESSAGE_PREFIX = DEFAULT_SUMMARY_MESSAGE_PREFIX;
 
-const TOOL_RESULT_MAX_CHARS = 200;
-
-export function isSummaryMessage(message: ChatMessage): boolean {
-  return (
-    message.role === 'user' &&
-    typeof message.content === 'string' &&
-    message.content.startsWith(SUMMARY_MESSAGE_PREFIX)
-  );
+/** What `summarizeHistory` takes from `AgentConfig.summarization`. Every field is optional. */
+export interface SummarizeOptions {
+  /** Prompt (string with optional `{{conversation}}`, or a builder). Omitted -> neutral built-in prompt. */
+  prompt?: string | SummaryPromptBuilder;
+  /** Prefix of the summary message. Omitted -> `DEFAULT_SUMMARY_MESSAGE_PREFIX`. */
+  prefix?: string;
+  /** Share of the context limit kept verbatim. Omitted -> 0.6. */
+  keepRatio?: number;
+  /** Tool results are cut to this length in the summarization input. Omitted -> 200. */
+  toolResultMaxChars?: number;
 }
 
-function compactMessageForSummary(message: ChatMessage): string | null {
+function compactMessageForSummary(
+  message: ChatMessage,
+  prefix: string,
+  toolResultMaxChars: number
+): string | null {
   if (message.role === 'system') return null;
 
-  if (isSummaryMessage(message)) {
+  if (isSummaryMessage(message, prefix)) {
     return message.content;
   }
 
   if (message.role === 'tool') {
-    const body = String(message.content ?? '').slice(0, TOOL_RESULT_MAX_CHARS);
+    const body = String(message.content ?? '').slice(0, toolResultMaxChars);
     return `[tool] ${body}`;
   }
 
@@ -39,16 +59,17 @@ function compactMessageForSummary(message: ChatMessage): string | null {
   return null;
 }
 
-function formatSummaryInput(messages: ChatMessage[]): string {
+function formatSummaryInput(messages: ChatMessage[], prefix: string, toolResultMaxChars: number): string {
   return messages
-    .map(compactMessageForSummary)
+    .map((message) => compactMessageForSummary(message, prefix, toolResultMaxChars))
     .filter((line): line is string => Boolean(line))
     .join('\n\n');
 }
 
-export function normalizeSummaryThreshold(ratio: number | undefined): number {
-  if (typeof ratio !== 'number' || !Number.isFinite(ratio)) return DEFAULT_SUMMARY_THRESHOLD_RATIO;
-  return Math.min(MAX_SUMMARY_THRESHOLD_RATIO, Math.max(MIN_SUMMARY_THRESHOLD_RATIO, ratio));
+function resolveToolResultMaxChars(value: number | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : DEFAULT_SUMMARY_TOOL_RESULT_MAX_CHARS;
 }
 
 export interface TokenSummaryTrigger {
@@ -65,6 +86,10 @@ export function shouldSummarizeByTokens(trigger: TokenSummaryTrigger): boolean {
   return promptTokens >= window * normalizeSummaryThreshold(trigger.summaryThresholdRatio);
 }
 
+/**
+ * Runs between turns. With `autoSummary` off nothing is ever summarized: the history is
+ * only trimmed once the turn limit is exceeded (token pressure alone never acts).
+ */
 export async function applyContextManagement(
   context: MessageContext,
   autoSummary: boolean,
@@ -72,7 +97,7 @@ export async function applyContextManagement(
   summarize: () => Promise<void>,
   tokenTrigger?: TokenSummaryTrigger
 ): Promise<void> {
-  const tokenPressure = tokenTrigger ? shouldSummarizeByTokens(tokenTrigger) : false;
+  const tokenPressure = autoSummary && tokenTrigger ? shouldSummarizeByTokens(tokenTrigger) : false;
   if (!tokenPressure && !context.shouldManage()) return;
 
   logger.debug('Context management triggered', {
@@ -93,11 +118,13 @@ export async function applyContextManagement(
 export async function summarizeHistory(
   context: MessageContext,
   provider: LLMProvider,
-  model: string,
+  model: string | undefined,
   handlers?: ChatHandlers,
   serviceTier?: ServiceTier,
+  options: SummarizeOptions = {}
 ): Promise<void> {
-  const { toSummarize, keepIndex } = context.getMessagesToSummarize();
+  const prefix = resolveSummaryPrefix(options.prefix);
+  const { toSummarize, keepIndex } = context.getMessagesToSummarize(options.keepRatio);
 
   if (toSummarize.length === 0) {
     logger.debug('Nothing to summarize');
@@ -111,13 +138,10 @@ export async function summarizeHistory(
 
   emitEvent(handlers, { type: 'lifecycle', phase: 'summarizing' });
 
-  const summaryPrompt =
-    `Aşağıdaki konuşma geçmişini özetle. Şu formatta yaz:\n\n` +
-    `TAMAMLANAN GÖREVLER: (ne yapıldı, sonucu ne oldu)\n` +
-    `ÖNEMLİ KARARLAR: (kullanıcının verdiği kararlar, tercihler)\n` +
-    `DEVAM EDEN İŞLER: (yarım kalan veya takip gereken şeyler)\n\n` +
-    `Gereksiz detay, hata mesajı tekrarı ve sohbet selamlaşması ekleme.\n\n` +
-    `Konuşma:\n${formatSummaryInput(toSummarize)}`;
+  const summaryPrompt = buildSummaryPrompt(
+    formatSummaryInput(toSummarize, prefix, resolveToolResultMaxChars(options.toolResultMaxChars)),
+    options.prompt
+  );
 
   try {
     const response = await provider.chat({
@@ -130,7 +154,7 @@ export async function summarizeHistory(
 
     const summaryMessage: ChatMessage = {
       role: 'user',
-      content: `${SUMMARY_MESSAGE_PREFIX} ${response.content}`,
+      content: `${prefix} ${response.content}`,
     };
 
     const messages = context.getMessages();

@@ -2,7 +2,7 @@ import type { EvalScenario } from '../../types.js';
 import { readFixtureFile, writeFixtureFile } from '../../fixtures/create-fixture.js';
 import {
   hadToolFailure,
-  mentionsModeSwitch,
+  toolStarts,
   wasPolicyBlocked,
 } from '../helpers.js';
 
@@ -11,7 +11,6 @@ export const easyCssAddRule: EvalScenario = {
   difficulty: 'easy',
   budget: 'simple',
   category: 'edit',
-  mode: 'agent',
   async setup(workspace) {
     await writeFixtureFile(
       workspace,
@@ -35,7 +34,6 @@ export const easyReadAndAnswer: EvalScenario = {
   difficulty: 'easy',
   budget: 'simple',
   category: 'read',
-  mode: 'agent',
   async setup(workspace) {
     await writeFixtureFile(workspace, 'config.txt', 'app_name=MyApp\nversion=2\n');
   },
@@ -55,20 +53,18 @@ export const easyReadAndAnswer: EvalScenario = {
   },
 };
 
-export const easyPlanNoWrite: EvalScenario = {
-  id: 'easy-plan-no-write',
+export const easyReadOnlyNoWrite: EvalScenario = {
+  id: 'easy-read-only-no-write',
   difficulty: 'easy',
   budget: 'simple',
   category: 'policy',
-  mode: 'plan',
+  readOnly: true,
   async setup(workspace) {
     await writeFixtureFile(workspace, 'README.md', '# Sample\n');
   },
   prompt: 'Create a new file output.txt with the text "done".',
   checkOutcome: async (workspace, trace) => {
-    const editCalls = trace.events.filter(
-      (e) => e.type === 'tool.call.start' && e.toolName === 'edit_file'
-    );
+    const editCalls = toolStarts(trace, 'edit_file');
     let outputExists = false;
     try {
       await readFixtureFile(workspace, 'output.txt');
@@ -77,10 +73,10 @@ export const easyPlanNoWrite: EvalScenario = {
       outputExists = false;
     }
     if (wasPolicyBlocked(trace, 'edit_file') || (editCalls.length === 0 && !outputExists)) {
-      const score = mentionsModeSwitch(trace) || wasPolicyBlocked(trace, 'edit_file') ? 100 : 85;
+      const score = wasPolicyBlocked(trace, 'edit_file') ? 100 : 85;
       return { pass: !outputExists, score };
     }
-    return { pass: false, details: 'edit_file should be blocked in plan mode' };
+    return { pass: false, details: 'edit_file should be blocked by the read-only policy' };
   },
 };
 
@@ -89,7 +85,6 @@ export const easyCreateFile: EvalScenario = {
   difficulty: 'easy',
   budget: 'simple',
   category: 'edit',
-  mode: 'agent',
   async setup(_workspace) {},
   prompt: 'Create hello.txt in the workspace root with the single line: Hello World',
   checkOutcome: async (workspace) => {
@@ -108,7 +103,6 @@ export const easyListRoot: EvalScenario = {
   difficulty: 'easy',
   budget: 'simple',
   category: 'read',
-  mode: 'agent',
   async setup(workspace) {
     await writeFixtureFile(workspace, 'alpha.txt', 'a\n');
     await writeFixtureFile(workspace, 'beta.txt', 'b\n');
@@ -128,7 +122,6 @@ export const easyNoSpuriousEdit: EvalScenario = {
   difficulty: 'easy',
   budget: 'simple',
   category: 'read',
-  mode: 'agent',
   async setup(workspace) {
     await writeFixtureFile(workspace, 'notes.md', '# Notes\nNothing to change.\n');
   },
@@ -148,7 +141,7 @@ export const easyNoSpuriousEdit: EvalScenario = {
 export const EASY_SCENARIOS: EvalScenario[] = [
   easyCssAddRule,
   easyReadAndAnswer,
-  easyPlanNoWrite,
+  easyReadOnlyNoWrite,
   easyCreateFile,
   easyListRoot,
   easyNoSpuriousEdit,

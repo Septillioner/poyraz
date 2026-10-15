@@ -30,8 +30,15 @@ export function toOpenAISchema(tool: ToolDefinition) {
   };
 }
 
-class ToolRegistryImpl {
+/**
+ * A tool registry. The module-level `toolRegistry` is the shared one (built-ins register
+ * there as a side effect of importing `tools/index`). `createToolRegistry()` makes an
+ * instance whose registrations never touch it: lookups fall back to `parent`, writes stay local.
+ */
+export class ToolRegistry {
   private definitions = new Map<string, ToolDefinition>();
+
+  constructor(private readonly parent?: ToolRegistry) {}
 
   register(def: ToolDefinition) {
     this.definitions.set(def.name, def);
@@ -51,11 +58,16 @@ class ToolRegistryImpl {
   }
 
   get(name: string): ToolDefinition | undefined {
-    return this.definitions.get(this.resolveAlias(name));
+    const canonical = this.resolveAlias(name);
+    return this.definitions.get(canonical) ?? this.parent?.get(canonical);
   }
 
+  /** Own definitions plus the parent's; an own definition shadows the parent's of the same name. */
   list(): ToolDefinition[] {
-    return Array.from(this.definitions.values());
+    const merged = new Map<string, ToolDefinition>();
+    for (const def of this.parent?.list() ?? []) merged.set(def.name, def);
+    for (const def of this.definitions.values()) merged.set(def.name, def);
+    return Array.from(merged.values());
   }
 
   listNames(): string[] {
@@ -67,6 +79,10 @@ class ToolRegistryImpl {
     return def?.presentation ?? { label: name, icon: 'Wrench' };
   }
 
+  /**
+   * Picks tools by preset and/or name. An empty selection (no presets, no names) selects
+   * NO tools: nothing is implied. `exclude` only removes from what was selected.
+   */
   resolveToolSet(options: {
     presets?: ToolPresetName[];
     include?: string[];
@@ -81,10 +97,6 @@ class ToolRegistryImpl {
 
     for (const name of options.include ?? []) {
       names.add(this.resolveAlias(name));
-    }
-
-    if (names.size === 0) {
-      this.listNames().forEach((n) => names.add(n));
     }
 
     for (const name of options.exclude ?? []) {
@@ -120,7 +132,12 @@ class ToolRegistryImpl {
   }
 }
 
-export const toolRegistry = new ToolRegistryImpl();
+export const toolRegistry = new ToolRegistry();
+
+/** Creates an isolated registry (empty, or layered over `parent`, e.g. the shared one for built-ins). */
+export function createToolRegistry(parent?: ToolRegistry): ToolRegistry {
+  return new ToolRegistry(parent);
+}
 
 export function resolveCanonicalToolName(name: string): string {
   return toolRegistry.resolveAlias(name);

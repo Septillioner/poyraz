@@ -1,6 +1,6 @@
 # Tools
 
-Built-in tools are registered when you import `poyraz`, but an agent gets none until you opt in via presets, includes/excludes, or custom definitions. Without a tool selection the agent is a bare model (no tools). Selecting tools does not inject `BASE_PROMPT` into the system message; tools go as provider schemas. Pass coding instructions yourself with `.SystemPrompt(...)` (optionally including exported `BASE_PROMPT`).
+Built-in tools are registered when you import `poyraz`, but an agent gets none until you opt in via presets, includes/excludes, or custom definitions. Without a tool selection the agent is a bare model (no tools). Selecting tools adds nothing to the system message: the library writes no tool instructions, tools go to the provider as schemas only. If the model needs guidance on how to use them, put it in `.SystemPrompt(...)` or `.Rules(...)`.
 
 ## Presets
 
@@ -22,9 +22,13 @@ new AgentBuilder()
 
 `DefaultSystemTools({ read, write, execute, search|grep })` maps permission-style flags onto those presets.
 
+Presets and name lists are builder (and template / JSON) input only: `Build()` resolves them into the agent's `tools` map, and `AgentConfig` keeps no `toolPresets` / `includeTools`.
+
 Constant map: `TOOL_PRESETS`.
 
 ## Built-in tools
+
+> **Planned removal:** the built-in `fs`, `grep` and `system` tools (`read_file`, `edit_file`, `list_dir`, `glob_file_search`, `delete_file`, `grep`, `run_terminal_cmd`) and their presets are slated for removal from the library. New hosts should register their own tools with `defineTool`. `load_skill` stays.
 
 ### `read_file`
 
@@ -60,11 +64,18 @@ Ripgrep-backed search (`pattern`, optional `path`, `glob`, `output_mode`, …). 
 
 ### `load_skill`
 
-Not a preset. Present only when the agent has at least one skill (`AddSkill` / `AddSkills` or a template `skills` array).
+Not a preset. Present only when the agent has at least one skill (`AddSkill` / `AddSkills` or a template `skills` array) and the tool is not switched off.
 
 Parameter: `name`. The tool description lists each skill name and description. The result is that skill's `content`. Skill text is not copied into the system message.
 
-`WithoutTools('load_skill')` omits it. A policy `allowedTools` list must include `load_skill` or the tool stays hidden.
+Configure it with `SkillTool(...)` (`skillTool` in config / template):
+
+| Field | Effect |
+|-------|--------|
+| `enabled` | Omitted → on whenever skills exist. `false` hides the tool even when skills are registered |
+| `toolName` | Name the model sees. Omitted or blank → `load_skill` |
+
+`WithoutTools(name)` also omits it (for the default name, `WithoutTools('load_skill')` works even with a custom `toolName`). A policy `allowedTools` list must include the tool's name or it stays hidden. Helpers: `resolveSkillToolName(config?)`, `isSkillToolEnabled(skills, config?)`, `LOAD_SKILL_TOOL_NAME`. The context meter counts the tool schema and its results under `skills`, whatever the name. See [Agent API](agent-api.md#system-prompt-rules-and-skills).
 
 ## Inspecting the registry
 
@@ -78,9 +89,11 @@ toolRegistry.resolveToolSet({ presets: ['filesystem'], exclude: ['delete_file'] 
 
 `builtinTools` is a name → definition map of registered built-ins.
 
-## Mode filtering
+`toolRegistry` is the shared registry. Each builder and each agent has its own registry layered over it (`createToolRegistry(parent?)`): `RegisterTool` and `mergeExternalTools` write only to the agent's own, `agent.getToolRegistry()` returns it, and the shared one is never modified by an agent.
 
-Presets define the **base** set. The active mode then filters it. See [Modes](modes.md).
+## Policy filtering
+
+Presets define the **base** set. The active `AgentPolicy` then filters it (`allowedTools`). See [Agent policy](policy.md).
 
 ## Custom tools
 

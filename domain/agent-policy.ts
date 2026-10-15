@@ -51,7 +51,8 @@ export function resolvePolicyTools(
   baseTools: string[],
   policy: AgentPolicy
 ): string[] {
-  if (policy.allowedTools === 'all') return [...baseTools];
+  // Anything but an explicit list (`'all'`, or an unset field) leaves every tool allowed.
+  if (!Array.isArray(policy.allowedTools)) return [...baseTools];
   const allowed = new Set(policy.allowedTools);
   return baseTools.filter((tool) => allowed.has(tool));
 }

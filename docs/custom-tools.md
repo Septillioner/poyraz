@@ -52,7 +52,7 @@ Second argument to `execute`:
 
 | API | Behavior |
 |-----|----------|
-| `RegisterTool(def)` | Registers on the shared registry and includes the tool on this agent |
+| `RegisterTool(def)` | Registers on this builder's own registry and includes the tool on this agent (the shared `toolRegistry` is not mutated) |
 | `AddTool` / `AddTools` | Attach definitions on this agent only |
 | `agent.mergeExternalTools(map)` | Add tools after build (same pattern as MCP) |
 

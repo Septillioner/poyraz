@@ -1,7 +1,6 @@
 export interface ToolRoutingPolicy {
   maxToolRounds: number;
   repeatCallLimit: number;
-  deterministicMode: boolean;
   deniedTools?: string[];
   /** Reason returned when a tool is in deniedTools. */
   deniedToolReason?: string;

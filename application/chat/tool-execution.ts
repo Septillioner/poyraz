@@ -11,7 +11,25 @@ import {
   tryParseToolError,
 } from './tool-errors.js';
 import { getToolExampleShape } from '../prompt/tool-schema-hints.js';
-import { buildRepairInstruction } from './repair-instruction.js';
+import {
+  buildRepairInstruction,
+  isRepairEnabled,
+  resolveRepairMaxAttempts,
+  type RepairOptions,
+} from './repair-instruction.js';
+
+export interface ToolExecutionOptions {
+  /** Repair text on failed results. Omitted / not enabled -> failed results carry no `REPAIR:` text. */
+  repair?: RepairOptions;
+  /**
+   * Argument names whose absence is reported as `MISSING_REQUIRED_ARG` ("<tool> requires '<arg>' argument.")
+   * instead of the general `VALIDATION_ERROR`. Defaults to `DEFAULT_MISSING_ARG_NAMES`; `[]` turns it off.
+   */
+  missingArgNames?: readonly string[];
+}
+
+/** Legacy default of `ToolExecutionOptions.missingArgNames`. Keyed by argument name, not by tool name. */
+export const DEFAULT_MISSING_ARG_NAMES: readonly string[] = ['command'];
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -56,27 +74,32 @@ function withRepair(
   context: ToolContext,
   toolCallId: string,
   policyGuard?: ToolPolicyGuard,
-  signature?: string
+  signature?: string,
+  repair?: RepairOptions
 ): ToolCallOutcome {
   const parsed = tryParseToolError(errorContent);
-  if (!parsed) {
+  if (!parsed || !isRepairEnabled(repair)) {
     return toolMessage(errorContent, toolCallId);
   }
   if (policyGuard && signature) {
+    if (policyGuard.getRepairAttempts(signature) >= resolveRepairMaxAttempts(repair)) {
+      return toolMessage(errorContent, toolCallId);
+    }
     policyGuard.markRepairAttempt(signature);
   }
-  const repair = buildRepairInstruction(toolName, parsed, toolArgs, {
-    lastReadFile: context.lastReadFile,
-  });
-  return toolMessage(`${errorContent}\n\n${repair}`, toolCallId);
+  const text = buildRepairInstruction(toolName, parsed, toolArgs, { lastReadFile: context.lastReadFile }, repair);
+  return toolMessage(`${errorContent}\n\n${text}`, toolCallId);
 }
 
+/**
+ * Remembers the last successful "edit-ready" read for repair hints. Recognized by the shape of the
+ * structured result (`edit_ready`, `target_file`, `line_count`), not by the tool's name.
+ */
 function updateLastReadFile(
   context: ToolContext,
-  toolName: string,
   normalized: { content: string; structured?: unknown; isError?: boolean }
 ): void {
-  if (toolName !== 'read_file' || normalized.isError) return;
+  if (normalized.isError) return;
   if (!normalized.structured || typeof normalized.structured !== 'object') return;
 
   const structured = normalized.structured as Record<string, unknown>;
@@ -98,16 +121,23 @@ export async function executeToolCall(
   tools: Record<string, ToolDefinition>,
   policyGuard: ToolPolicyGuard,
   toolCall: any,
-  context: ToolContext
+  context: ToolContext,
+  options: ToolExecutionOptions = {}
 ): Promise<ToolCallOutcome> {
+  const repair = options.repair;
+  const missingArgNames = options.missingArgNames ?? DEFAULT_MISSING_ARG_NAMES;
   const rawToolName = toolCall.function.name;
   const toolName = toolRegistry.resolveAlias(rawToolName);
   const toolArgs = parseRawToolArgs(toolCall.function.arguments);
   const signature = buildSignature(toolName, toolArgs);
   const count = policyGuard.markAndCountSignature(signature);
   const repairAttempts = policyGuard.getRepairAttempts(signature);
+  // A failed call that got a repair text may be retried; with repair off (or its attempts used up)
+  // identical calls are bounded by `repeatCallLimit` alone.
+  const repairInFlight =
+    isRepairEnabled(repair) && repairAttempts > 0 && repairAttempts < resolveRepairMaxAttempts(repair);
 
-  if (count > policyGuard.getPolicy().repeatCallLimit && repairAttempts === 0) {
+  if (count > policyGuard.getPolicy().repeatCallLimit && !repairInFlight) {
     const repeatedCallError = createToolError(
       TOOL_ERROR_CODES.policyBlocked,
       `Tool call blocked: repeated same tool+arguments too many times (${toolName}).`,
@@ -121,7 +151,8 @@ export async function executeToolCall(
       context,
       toolCall.id,
       policyGuard,
-      signature
+      signature,
+      repair
     );
   }
 
@@ -136,7 +167,8 @@ export async function executeToolCall(
       context,
       toolCall.id,
       policyGuard,
-      signature
+      signature,
+      repair
     );
   }
 
@@ -151,7 +183,8 @@ export async function executeToolCall(
       context,
       toolCall.id,
       policyGuard,
-      signature
+      signature,
+      repair
     );
   }
 
@@ -162,12 +195,17 @@ export async function executeToolCall(
         path: i.path.join('.'),
         message: i.message,
       }));
-      const hasMissingCommand = errors.some((e) => e.path === 'command');
-      const errorCode = hasMissingCommand
+      const missingArgs = missingArgNames.filter((name) =>
+        errors.some((e) => e.path === name)
+      );
+      const hasMissingArg = missingArgs.length > 0;
+      const errorCode = hasMissingArg
         ? TOOL_ERROR_CODES.missingRequiredArg
         : TOOL_ERROR_CODES.validationError;
-      const errorMsg = hasMissingCommand
-        ? `${toolName} requires 'command' argument.`
+      const errorMsg = hasMissingArg
+        ? `${toolName} requires ${missingArgs.map((name) => `'${name}'`).join(', ')} ${
+            missingArgs.length > 1 ? 'arguments' : 'argument'
+          }.`
         : `${toolName} received invalid arguments.`;
       const example = getToolExampleShape(toolName);
       const exampleHint = example ? ` Expected shape: ${example}.` : '';
@@ -180,7 +218,8 @@ export async function executeToolCall(
         context,
         toolCall.id,
         policyGuard,
-        signature
+        signature,
+        repair
       );
     }
 
@@ -195,11 +234,12 @@ export async function executeToolCall(
         context,
         toolCall.id,
         policyGuard,
-        signature
+        signature,
+        repair
       );
     }
 
-    updateLastReadFile(context, toolName, normalized);
+    updateLastReadFile(context, normalized);
 
     policyGuard.markToolSuccess(toolName);
 
@@ -229,7 +269,8 @@ export async function executeToolCall(
       context,
       toolCall.id,
       policyGuard,
-      signature
+      signature,
+      repair
     );
   }
 }

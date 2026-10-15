@@ -35,6 +35,22 @@ export type RateLimitNotice =
   | ({ kind: 'wait' } & RateLimitWait)
   | { kind: 'resumed'; attempt: number };
 
+/**
+ * Wait-and-retry policy for rate-limited requests. Off unless `enabled` is true; the waiting
+ * is always bounded (`maxWaits`, optionally `maxDelayMs` / `maxTotalWaitMs`).
+ */
+export interface RateLimitPolicy {
+  enabled: boolean;
+  /** Max waits per request. `0` means no waiting. */
+  maxWaits: number;
+  /** Wait used when the provider reports no window. */
+  fallbackDelayMs?: number;
+  /** Longest single wait; a longer window is capped to it. */
+  maxDelayMs?: number;
+  /** Budget for all waits of one request together. */
+  maxTotalWaitMs?: number;
+}
+
 export interface ChatMessageProviderMeta {
   gemini?: {
     modelContent: Content;
@@ -70,7 +86,8 @@ export interface AgentError {
 }
 
 export interface ChatOptions {
-  model: string;
+  /** Sent only when set. Optional so a clean agent (or a custom provider) needs none. */
+  model?: string;
   messages: ChatMessage[];
   tools?: any[];
   options?: any;
@@ -81,6 +98,8 @@ export interface ChatOptions {
   signal?: AbortSignal;
   /** Reports a TPM/RPM wait so the caller can show it and keep the turn alive. */
   onRateLimit?: (notice: RateLimitNotice) => void;
+  /** Rate-limit wait policy for this call. Omitted -> the provider's own (default: no waiting). */
+  rateLimit?: RateLimitPolicy;
 }
 
 export interface TokenUsage {

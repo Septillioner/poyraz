@@ -52,7 +52,8 @@ export class GeminiProvider implements LLMProvider {
 
     try {
       const stream = await this.ai.models.generateContentStream({
-        model: options.model,
+        // Gemini needs a model; an empty name makes the API answer with its own clear error.
+        model: options.model ?? '',
         contents,
         config: {
           systemInstruction,

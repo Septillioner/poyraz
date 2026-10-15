@@ -4,7 +4,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { isMcpHttpServerDef, type McpServerDef } from '../../domain/mcp.js';
 import type { ToolDefinition } from '../../tools/core/types.js';
-import { bridgeMcpTool } from './mcp-tool-bridge.js';
+import { bridgeMcpTool, resolveMcpToolPrefix } from './mcp-tool-bridge.js';
 
 export type McpConnectionStatus = 'connected' | 'error' | 'disabled';
 
@@ -66,10 +66,30 @@ function describeConnectError(error: any): string {
   return error?.message ?? String(error);
 }
 
-/** Owns one child-process connection per configured MCP server and exposes their tools as a merged set. */
-class McpClientManager {
+export interface McpClientManagerOptions {
+  /** Name prefix of bridged tools. Omitted -> `MCP_TOOL_PREFIX` (`mcp_`). */
+  toolPrefix?: string;
+}
+
+/**
+ * Owns one connection per configured MCP server and exposes their tools as a merged set.
+ * Instances are independent: an agent with `mcp.enabled` creates its own, so connections, states and
+ * tool names are never shared between agents. The exported `mcpClientManager` is a shared default
+ * for hosts that manage MCP themselves.
+ */
+export class McpClientManager {
   private connections = new Map<string, McpConnection>();
   private states = new Map<string, McpServerState>();
+  private readonly toolPrefix: string;
+
+  constructor(options: McpClientManagerOptions = {}) {
+    this.toolPrefix = resolveMcpToolPrefix(options.toolPrefix);
+  }
+
+  /** The prefix bridged tool names of this manager start with. */
+  getToolPrefix(): string {
+    return this.toolPrefix;
+  }
 
   /** Disconnects all current connections and reconnects every server in `servers`. */
   async connectAll(servers: Record<string, McpServerDef>): Promise<Record<string, ToolDefinition>> {
@@ -95,7 +115,7 @@ class McpClientManager {
       const names = used ?? this.namesExcept(id);
       const tools: Record<string, ToolDefinition> = {};
       for (const tool of mcpTools) {
-        const bridged = bridgeMcpTool(id, client, tool as any, names);
+        const bridged = bridgeMcpTool(id, client, tool as any, names, this.toolPrefix);
         tools[bridged.name] = bridged;
       }
 
@@ -145,4 +165,10 @@ class McpClientManager {
   }
 }
 
+/** A fresh manager that shares nothing with the default `mcpClientManager` or with other managers. */
+export function createMcpClientManager(options: McpClientManagerOptions = {}): McpClientManager {
+  return new McpClientManager(options);
+}
+
+/** Shared default manager (default prefix). Agents with `mcp.enabled` do not use it, they own one. */
 export const mcpClientManager = new McpClientManager();
