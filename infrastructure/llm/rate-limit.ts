@@ -1,6 +1,12 @@
 import { ChatAbortedError, assertNotAborted } from '../../shared/chat-aborted.js';
 import { logger } from '../../shared/logger.js';
-import type { RateLimitDelaySource, RateLimitNotice, RateLimitWait } from '../../domain/llm.js';
+import type {
+  LLMProvider,
+  RateLimitDelaySource,
+  RateLimitNotice,
+  RateLimitPolicy,
+  RateLimitWait,
+} from '../../domain/llm.js';
 
 const HTTP_TOO_MANY_REQUESTS = 429;
 
@@ -26,6 +32,8 @@ const DURATION_UNITS: Record<string, number> = { ms: 1, s: 1_000, m: 60_000, h: 
 const DURATION_PART = /(\d+(?:\.\d+)?)(ms|h|m|s)/g;
 const PLAIN_SECONDS = /^\d+(?:\.\d+)?$/;
 
+/** Waits per request used by `withRateLimitRetry` when it is called without a `rateLimit` policy. */
+export const RATE_LIMIT_DEFAULT_MAX_WAITS = 3;
 /** Wait used when the provider does not say when to come back. */
 export const RATE_LIMIT_FALLBACK_DELAY_MS = 20_000;
 /** Never come back faster than this, even when the header asks for less. */
@@ -41,12 +49,56 @@ export interface RateLimitDelay {
   source: RateLimitDelaySource;
 }
 
+/** No waiting, no retry: a rate-limit error surfaces at once. What providers use unless told otherwise. */
+export const DISABLED_RATE_LIMIT: RateLimitPolicy = Object.freeze({ enabled: false, maxWaits: 0 });
+
 export interface RateLimitRetryOptions {
   model?: string;
   signal?: AbortSignal;
   onRateLimit?: (notice: RateLimitNotice) => void;
-  /** Fixed wait used when the provider recommends nothing. */
+  /**
+   * Wait policy. Omitted -> a bounded default (`RATE_LIMIT_DEFAULT_MAX_WAITS` waits).
+   * Providers always pass one, and theirs is `DISABLED_RATE_LIMIT` unless configured.
+   */
+  rateLimit?: RateLimitPolicy;
+  /** Fixed wait used when the provider recommends nothing (`rateLimit.fallbackDelayMs` wins). */
   fallbackDelayMs?: number;
+}
+
+export type RateLimitExceededReason = 'max-waits' | 'max-total-wait';
+
+/**
+ * Thrown when rate limiting persists past the configured wait budget
+ * (`maxWaits` or `maxTotalWaitMs`). The original provider error is `cause`;
+ * `status` / `headers` are copied from it so status-based handling still works.
+ */
+export class RateLimitExceededError extends Error {
+  readonly reason: RateLimitExceededReason;
+  /** Waits that were completed before giving up. */
+  readonly waits: number;
+  /** Time spent waiting before giving up. */
+  readonly waitedMs: number;
+  readonly status?: number;
+  readonly headers?: unknown;
+
+  constructor(
+    reason: RateLimitExceededReason,
+    details: { waits: number; waitedMs: number; limit: number; nextDelayMs?: number; cause: unknown }
+  ) {
+    const original = messageOf(details.cause) || 'rate limited';
+    const summary =
+      reason === 'max-waits'
+        ? `Rate limit still active after ${details.waits} wait(s) (${details.waitedMs} ms waited, maxWaits=${details.limit})`
+        : `Rate limit wait budget exceeded: another ${details.nextDelayMs} ms wait would pass maxTotalWaitMs=${details.limit} (${details.waitedMs} ms already waited)`;
+    super(`${summary}: ${original}`, { cause: details.cause });
+    this.name = 'RateLimitExceededError';
+    this.reason = reason;
+    this.waits = details.waits;
+    this.waitedMs = details.waitedMs;
+    const source = details.cause as { status?: number; statusCode?: number; headers?: unknown } | null | undefined;
+    this.status = source?.status ?? source?.statusCode;
+    this.headers = source?.headers;
+  }
 }
 
 type HeaderLookup = (name: string) => string | null | undefined;
@@ -144,9 +196,22 @@ function parseMilliseconds(raw: string | null | undefined): number | undefined {
   return Number.isFinite(value) ? value : parseDurationMs(raw);
 }
 
-function clampDelay(delayMs: number): number {
-  if (!Number.isFinite(delayMs)) return RATE_LIMIT_FALLBACK_DELAY_MS;
-  return Math.min(RATE_LIMIT_MAX_DELAY_MS, Math.max(RATE_LIMIT_MIN_DELAY_MS, Math.round(delayMs)));
+function delayCap(maxDelayMs: number | undefined): number {
+  return typeof maxDelayMs === 'number' && Number.isFinite(maxDelayMs) && maxDelayMs > 0
+    ? Math.round(maxDelayMs)
+    : RATE_LIMIT_MAX_DELAY_MS;
+}
+
+/** A provider-suggested wait: never faster than the minimum, never longer than the cap. */
+function clampDelay(delayMs: number, capMs: number): number {
+  if (!Number.isFinite(delayMs)) return Math.min(RATE_LIMIT_FALLBACK_DELAY_MS, capMs);
+  return Math.min(capMs, Math.max(RATE_LIMIT_MIN_DELAY_MS, Math.round(delayMs)));
+}
+
+/** A configured fixed wait is taken as given (only the cap applies), so a short fallback stays short. */
+function clampFallback(delayMs: number, capMs: number): number {
+  if (!Number.isFinite(delayMs) || delayMs <= 0) return Math.min(RATE_LIMIT_FALLBACK_DELAY_MS, capMs);
+  return Math.min(capMs, Math.round(delayMs));
 }
 
 /**
@@ -155,8 +220,10 @@ function clampDelay(delayMs: number): number {
  */
 export function resolveRateLimitDelay(
   error: unknown,
-  fallbackMs: number = RATE_LIMIT_FALLBACK_DELAY_MS
+  fallbackMs: number = RATE_LIMIT_FALLBACK_DELAY_MS,
+  maxDelayMs?: number
 ): RateLimitDelay {
+  const cap = delayCap(maxDelayMs);
   const read = headerLookup(error);
   const message = messageOf(error);
   const tokenWindow = parseDurationMs(read(TOKEN_RESET_HEADER));
@@ -182,11 +249,10 @@ export function resolveRateLimitDelay(
     if (suggested !== undefined) source = 'message';
   }
   if (suggested === undefined) {
-    suggested = fallbackMs;
-    source = 'fallback';
+    return { delayMs: clampFallback(fallbackMs, cap), source: 'fallback' };
   }
 
-  return { delayMs: clampDelay(suggested), source };
+  return { delayMs: clampDelay(suggested, cap), source };
 }
 
 /** Abortable wait, so a rate-limited turn still stops the moment the user asks. */
@@ -214,31 +280,53 @@ export function sleepWithSignal(ms: number, signal?: AbortSignal): Promise<void>
 }
 
 /**
- * Runs a provider request and survives rate limits: on a TPM/RPM rejection it
- * waits for the reported window (or a fixed fallback) and sends the same request
- * again instead of ending the turn. `markEmitted` locks the retry out once any
- * output reached the caller, because replaying it would duplicate the stream.
+ * Runs a provider request and, when the policy allows, survives rate limits: on a TPM/RPM
+ * rejection it waits for the reported window (or the configured fallback) and sends the same
+ * request again. The waiting is always bounded:
+ * - `maxWaits` caps the number of waits, `maxDelayMs` one wait, `maxTotalWaitMs` all waits together;
+ * - past a limit it throws `RateLimitExceededError` (original error as `cause`);
+ * - an aborted signal ends it with `ChatAbortedError`, also in the middle of a wait.
+ * With a disabled policy (`enabled: false` or `maxWaits: 0`) the first rate-limit error is
+ * rethrown untouched, with no wait and no retry.
+ * `markEmitted` locks the retry out once any output reached the caller, because replaying
+ * it would duplicate the stream.
  */
 export async function withRateLimitRetry<T>(
   options: RateLimitRetryOptions,
   attempt: (markEmitted: () => void) => Promise<T>
 ): Promise<T> {
+  const policy = options.rateLimit ?? { enabled: true, maxWaits: RATE_LIMIT_DEFAULT_MAX_WAITS };
+  const maxWaits = policy.enabled ? Math.max(0, Math.floor(policy.maxWaits)) : 0;
+  const fallbackDelayMs = policy.fallbackDelayMs ?? options.fallbackDelayMs;
   let emitted = false;
-  let waits = 0;
+  let waitedMs = 0;
 
-  for (;;) {
+  for (let waits = 0; waits <= maxWaits; waits++) {
     try {
       return await attempt(() => {
         emitted = true;
       });
     } catch (error) {
       if (options.signal?.aborted || isAbortError(error)) throw new ChatAbortedError();
-      if (!isRateLimitError(error) || emitted) throw error;
+      if (maxWaits === 0 || !isRateLimitError(error) || emitted) throw error;
 
-      waits++;
-      const { delayMs, source } = resolveRateLimitDelay(error, options.fallbackDelayMs);
+      if (waits >= maxWaits) {
+        throw new RateLimitExceededError('max-waits', { waits, waitedMs, limit: maxWaits, cause: error });
+      }
+
+      const { delayMs, source } = resolveRateLimitDelay(error, fallbackDelayMs, policy.maxDelayMs);
+      if (policy.maxTotalWaitMs !== undefined && waitedMs + delayMs > policy.maxTotalWaitMs) {
+        throw new RateLimitExceededError('max-total-wait', {
+          waits,
+          waitedMs,
+          limit: policy.maxTotalWaitMs,
+          nextDelayMs: delayMs,
+          cause: error,
+        });
+      }
+
       const wait: RateLimitWait = {
-        attempt: waits,
+        attempt: waits + 1,
         delayMs,
         retryAt: Date.now() + delayMs,
         source,
@@ -251,7 +339,27 @@ export async function withRateLimitRetry<T>(
       });
       options.onRateLimit?.({ kind: 'wait', ...wait });
       await sleepWithSignal(delayMs, options.signal);
-      options.onRateLimit?.({ kind: 'resumed', attempt: waits });
+      waitedMs += delayMs;
+      options.onRateLimit?.({ kind: 'resumed', attempt: waits + 1 });
     }
   }
+
+  // Unreachable: the last iteration returns or throws. Kept so the function can never loop silently.
+  throw new RateLimitExceededError('max-waits', {
+    waits: maxWaits,
+    waitedMs,
+    limit: maxWaits,
+    cause: new Error('rate limited'),
+  });
+}
+
+/**
+ * Hands `policy` to every `chat` call of `provider` through `ChatOptions.rateLimit`
+ * (a policy already on the call wins). How an agent applies its `rateLimit` config to any provider.
+ */
+export function withRateLimitPolicy(provider: LLMProvider, policy: RateLimitPolicy): LLMProvider {
+  return {
+    chat: (options, onToken, onReasoning) =>
+      provider.chat(options.rateLimit ? options : { ...options, rateLimit: policy }, onToken, onReasoning),
+  };
 }

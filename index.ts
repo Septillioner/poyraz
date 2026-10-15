@@ -1,9 +1,34 @@
 export { Agent, type AgentConfig } from './application/agent/agent.js';
 export { AgentBuilder } from './application/agent/agent-builder.js';
-export type { AgentTemplate, Skill } from './application/agent/config.js';
+export {
+  AgentConfigError,
+  chainContinuation,
+  DEFAULT_LOAD_SKILL_TOOL_NAME,
+  DEFAULT_RATE_LIMIT_MAX_WAITS,
+  resolveAgentPolicy,
+  resolveRateLimitConfig,
+} from './application/agent/config.js';
+export type {
+  AgentMcpConfig,
+  AgentTemplate,
+  ContinuationContext,
+  ContinuationDecision,
+  ContinuationOutcome,
+  ContinuationPolicy,
+  LoggingConfig,
+  PolicyConfig,
+  RateLimitConfig,
+  RepairConfig,
+  ResolvedRateLimitConfig,
+  SameToolBreakerConfig,
+  Skill,
+  SkillToolConfig,
+  SummarizationConfig,
+  SummaryPromptBuilder,
+} from './application/agent/config.js';
 export type { ToolRoutingPolicy } from './application/chat/tool-policy.js';
 
-export { buildSystemPrompt, BASE_PROMPT } from './application/prompt/system-prompt.js';
+export { buildSystemPrompt } from './application/prompt/system-prompt.js';
 export type { BuiltSystemPrompt } from './application/prompt/system-prompt.js';
 
 export {
@@ -17,7 +42,61 @@ export {
 } from './domain/agent-policy.js';
 
 export { createMessageContext } from './application/context/message-context.js';
-export type { MessageContext, MemoryUsage } from './application/context/message-context.js';
+export type {
+  ContextOptions,
+  MessageContext,
+  MemoryUsage,
+} from './application/context/message-context.js';
+
+export {
+  CONTEXT_CATEGORIES,
+  emptyCategoryTokens,
+} from './domain/context.js';
+export type {
+  CompiledRequest,
+  CompiledToolSchema,
+  CompileRequestOptions,
+  ContextCategory,
+  ContextCategoryTokens,
+  ContextDrift,
+  ContextEstimate,
+  ContextMeter,
+  ContextRealSnapshot,
+  ContextRequestRecord,
+  MessageContextMeta,
+  SystemPromptParts,
+  ToolSchemaCategory,
+} from './domain/context.js';
+export {
+  categorizeMessage,
+  buildMessageMeta,
+} from './application/context/message-category.js';
+export type { CategorizeOptions } from './application/context/message-category.js';
+export {
+  buildMeter,
+  completeRecord,
+  computeDrift,
+  estimateRequest,
+  realSnapshot,
+  scaleCategoriesToTotal,
+} from './application/context/context-report.js';
+export type { EstimateRequestInput, MessageEntry } from './application/context/context-report.js';
+export {
+  createTokenEstimator,
+  DEFAULT_CHARS_PER_TOKEN,
+  DEFAULT_MESSAGE_OVERHEAD_TOKENS,
+} from './application/context/token-estimate.js';
+export type {
+  CalibrationSample,
+  TokenEstimator,
+  TokenEstimatorOptions,
+} from './application/context/token-estimate.js';
+
+export {
+  buildSummaryPrompt,
+  DEFAULT_SUMMARY_MESSAGE_PREFIX,
+  DEFAULT_SUMMARY_PROMPT,
+} from './application/context/summary-settings.js';
 
 export {
   SUMMARY_MESSAGE_PREFIX,
@@ -39,11 +118,19 @@ export {
   resolveRateLimitDelay,
   sleepWithSignal,
   withRateLimitRetry,
+  withRateLimitPolicy,
+  DISABLED_RATE_LIMIT,
+  RATE_LIMIT_DEFAULT_MAX_WAITS,
+  RateLimitExceededError,
   RATE_LIMIT_FALLBACK_DELAY_MS,
   RATE_LIMIT_MAX_DELAY_MS,
   RATE_LIMIT_MIN_DELAY_MS,
 } from './infrastructure/llm/rate-limit.js';
-export type { RateLimitDelay, RateLimitRetryOptions } from './infrastructure/llm/rate-limit.js';
+export type {
+  RateLimitDelay,
+  RateLimitExceededReason,
+  RateLimitRetryOptions,
+} from './infrastructure/llm/rate-limit.js';
 
 export { ChatAbortedError, assertNotAborted } from './shared/chat-aborted.js';
 
@@ -76,6 +163,7 @@ export {
 } from './domain/model-profile.js';
 
 export { createLLMProvider } from './infrastructure/llm/create-provider.js';
+export type { CreateProviderOptions } from './infrastructure/llm/create-provider.js';
 export { OllamaProvider, OpenAIProvider } from './infrastructure/llm/providers.js';
 export type {
   ChatMessage,
@@ -90,6 +178,7 @@ export type {
   AgentError,
   RateLimitDelaySource,
   RateLimitNotice,
+  RateLimitPolicy,
   RateLimitWait,
 } from './domain/llm.js';
 
@@ -112,16 +201,25 @@ export type {
 export { fetchModelInfo, fetchModelInfoForId } from './application/services/model-info.js';
 export type { ModelInfo } from './application/services/model-info.js';
 
-export { LOAD_SKILL_TOOL_NAME } from './tools/definitions/skills.js';
+export {
+  LOAD_SKILL_TOOL_NAME,
+  buildSkillCatalog,
+  isSkillToolEnabled,
+  resolveSkillToolName,
+} from './tools/definitions/skills.js';
 
 export {
   logger,
+  Logger,
   LogLevel,
+  createLogger,
+  runWithLogger,
+  scopeToLogger,
   configureFileLogging,
   getConfiguredLogDir,
   isFileLoggingEnabled,
 } from './shared/logger.js';
-export type { FileLoggingConfig } from './shared/logger.js';
+export type { FileLoggingConfig, LoggerOptions } from './shared/logger.js';
 
 export {
   isMcpHttpServerDef,
@@ -132,11 +230,23 @@ export {
   type McpStdioServerDef,
 } from './domain/mcp.js';
 export {
+  McpClientManager,
+  createMcpClientManager,
   mcpClientManager,
+  type McpClientManagerOptions,
   type McpConnectionStatus,
   type McpServerState,
 } from './infrastructure/mcp/mcp-client-manager.js';
-export { MCP_TOOL_PREFIX, mcpToolName } from './infrastructure/mcp/mcp-tool-bridge.js';
+export {
+  MCP_TOOL_PREFIX,
+  isMcpToolName,
+  mcpToolName,
+  resolveMcpToolPrefix,
+} from './infrastructure/mcp/mcp-tool-bridge.js';
+
+export { builtinRepairResolvers } from './application/chat/repair-instruction.js';
+export type { RepairInput, RepairOptions, RepairResolver } from './application/chat/repair-instruction.js';
+export type { ToolExecutionOptions } from './application/chat/tool-execution.js';
 
 export { setActiveWorkspaceRoot } from './tools/core/shell-session.js';
 

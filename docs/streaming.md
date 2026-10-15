@@ -63,6 +63,7 @@ ac.abort();
 | `lifecycle` | `phase` | `thinking`, `summarizing`, `summarized` |
 | `text.delta` | `delta` | Assistant text stream |
 | `reasoning.delta` | `delta` | Reasoning stream when the provider emits it |
+| `context.usage` | `promptTokens`, `completionTokens`, `totalTokens`, `cachedTokens?`, `round`, `final` | After every model request of the turn, before an abort can end it. `promptTokens` is the live window occupancy; `round` is 1-based; `final` is true only when the turn really ends after this request: a tool round, a response gate retry and a `continue` decision of a [`ContinuationPolicy`](policy.md#continuation) are all `final: false`. A request that cannot be followed by another round (the `maxToolRounds` budget is used up), and a turn cut short by an abort or an error, report `final: true`. See [Context](context.md) |
 | `rate_limit.wait` | `attempt`, `delayMs`, `retryAt`, `source`, `reason?` | Rate limited (TPM/RPM); waiting `delayMs` before the same request is retried. `source` is `header`, `message`, or `fallback` |
 | `rate_limit.resumed` | `attempt` | The wait ended and the request is being sent again |
 | `tool.call.start` | `toolCallId`, `toolName`, `args` | Tool about to run |
@@ -71,13 +72,21 @@ ac.abort();
 
 `emitEvent(handlers, event)` is available if you build a custom loop that reuses the same event shape.
 
+## Retries, notices and continuation
+
+The `context.usage` event of a tool-less reply is published once gates and continuation have decided, so its `final` flag is reliable; it is still published for a turn that is cancelled at that point. Rounds that are not tool rounds look the same on the stream: a response gate retry or a continuation starts another model request, so you see another `lifecycle: thinking`, another `context.usage` (with the next `round`) and more `text.delta`. The notice that triggers it is a `user` message in the history, not an event. With `bufferTextUntilAccepted` in the policy, the `text.delta` of a tool-less reply arrive only after the response gates accepted it (all at once), and a rejected reply is never streamed. `agent.chat` resolves with `continuation` (`{ continuations, reason?, data? }`) only when a continuation policy is configured.
+
+Cancelling with the `signal` ends the turn with `ChatAbortedError`, also while a continuation policy is deciding; the `context.usage` of requests already paid for was emitted before.
+
 ## Rate limits
 
-`OpenAIProvider` (OpenAI, OpenRouter, Groq, llama.cpp) never ends a turn on a TPM/RPM rejection. On a 429 it waits and repeats the same request:
+Waiting on a rate limit is **off by default**: a TPM/RPM rejection (429) is an error at once. Enable it with `RateLimit({ enabled: true })` (or `createLLMProvider(profile, key, { rateLimit })`); see [Rate limit and logging](rate-limit-and-logging.md). It is implemented by `OpenAIProvider` (OpenAI, OpenRouter, Groq, llama.cpp); Ollama and Gemini never wait.
+
+When enabled, on a 429 the request waits and is repeated. The delay is taken from the first source that has one:
 
 1. `x-ratelimit-reset-tokens` or `x-ratelimit-reset-requests`, picking the window named in the message, otherwise the longer one.
 2. `retry-after-ms`, then `retry-after` (delay or HTTP date).
 3. The `Please try again in 12.5s` hint in the message body.
-4. A fixed `RATE_LIMIT_FALLBACK_DELAY_MS` (20s) when the provider recommends nothing.
+4. `fallbackDelayMs` (default `RATE_LIMIT_FALLBACK_DELAY_MS`, 20s) when the provider recommends nothing.
 
-The wait is clamped to 1s..10min, aborts instantly when the turn is cancelled, and never repeats a request that already streamed output to the caller. The same protection covers `/summary`, because the summarizer goes through the same provider.
+Each wait is clamped to 1s..`maxDelayMs` (default `RATE_LIMIT_MAX_DELAY_MS`, 10 min), aborts instantly when the turn is cancelled, and never repeats a request that already streamed output to the caller. The waiting is always bounded: `maxWaits` (default 3) and `maxTotalWaitMs` end it with `RateLimitExceededError`. The summarizer goes through the same provider, so `summarize()` is covered too. Each wait emits `rate_limit.wait`, and `rate_limit.resumed` when the request is sent again.

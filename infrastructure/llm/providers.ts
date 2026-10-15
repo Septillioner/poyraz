@@ -6,6 +6,7 @@ import type {
   ChatOptions,
   ChatResponse,
   LLMProvider,
+  RateLimitPolicy,
   TokenUsage,
   ToolCall,
 } from '../../domain/llm.js';
@@ -19,7 +20,7 @@ import {
   toResponsesInput,
   toResponsesTools,
 } from './openai-responses.js';
-import { isRateLimitError, withRateLimitRetry } from './rate-limit.js';
+import { DISABLED_RATE_LIMIT, isRateLimitError, withRateLimitRetry } from './rate-limit.js';
 import { sanitizeToolPairing } from './tool-pairing.js';
 
 export class OllamaProvider implements LLMProvider {
@@ -31,10 +32,12 @@ export class OllamaProvider implements LLMProvider {
 
   async chat(options: ChatOptions, onToken?: (token: string) => void): Promise<ChatResponse> {
     const response = await this.ollama.chat({
-      model: options.model,
+      // Ollama has no default model; an empty name makes the server answer with its own clear error.
+      model: options.model ?? '',
       messages: sanitizeToolPairing(options.messages) as any,
       options: options.options,
-      tools: options.tools,
+      // An empty list is never sent: the key is left out.
+      tools: options.tools?.length ? options.tools : undefined,
       stream: true,
     });
 
@@ -79,6 +82,11 @@ export class OllamaProvider implements LLMProvider {
 export interface OpenAIProviderOptions {
   completionsOnly?: boolean;
   maxTools?: number;
+  /**
+   * Default wait-and-retry policy for rate-limited requests (`ChatOptions.rateLimit` wins per call).
+   * Omitted -> no waiting: a 429 surfaces as an error at once.
+   */
+  rateLimit?: RateLimitPolicy;
 }
 
 export class OpenAIProvider implements LLMProvider {
@@ -86,6 +94,7 @@ export class OpenAIProvider implements LLMProvider {
   private baseUrl: string;
   private readonly completionsOnly: boolean;
   private readonly maxTools: number | undefined;
+  private readonly rateLimit: RateLimitPolicy;
   private readonly responsesUnsupportedModels = new Set<string>();
 
   constructor(
@@ -97,6 +106,7 @@ export class OpenAIProvider implements LLMProvider {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.completionsOnly = options?.completionsOnly === true;
     this.maxTools = options?.maxTools;
+    this.rateLimit = options?.rateLimit ?? DISABLED_RATE_LIMIT;
     this.client = new OpenAI({
       baseURL: this.baseUrl,
       apiKey: apiKey,
@@ -109,14 +119,16 @@ export class OpenAIProvider implements LLMProvider {
     onToken?: (token: string) => void,
     onReasoning?: (delta: string) => void
   ): Promise<ChatResponse> {
-    if (this.shouldTryResponses(options.model)) {
+    // No model: nothing is sent, the endpoint's own default applies (OpenAI-compatible servers allow it).
+    const model = options.model ?? '';
+    if (this.shouldTryResponses(model)) {
       try {
         return await this.chatViaResponses(options, onToken, onReasoning);
       } catch (error: any) {
-        if (!this.shouldFallBackToCompletions(options.model, error)) {
+        if (!this.shouldFallBackToCompletions(model, error)) {
           throw error;
         }
-        this.responsesUnsupportedModels.add(this.responsesRouteKey(options.model));
+        this.responsesUnsupportedModels.add(this.responsesRouteKey(model));
         logger.warn('Responses API unsupported; falling back to Chat Completions', {
           model: options.model,
           message: error?.message,
@@ -175,6 +187,7 @@ export class OpenAIProvider implements LLMProvider {
         model: options.model,
         signal: options.signal,
         onRateLimit: options.onRateLimit,
+        rateLimit: options.rateLimit ?? this.rateLimit,
       },
       (markEmitted) =>
         this.streamResponses(
@@ -202,13 +215,15 @@ export class OpenAIProvider implements LLMProvider {
   ): Promise<ChatResponse> {
     const { instructions, input } = toResponsesInput(sanitizeToolPairing(options.messages));
     const tools = toResponsesTools(options.tools);
+    const reasoning = buildResponsesReasoning(options.reasoning?.effort);
 
     const requestBody: Record<string, unknown> = {
-      model: options.model,
+      ...(options.model ? { model: options.model } : {}),
       input,
       stream: true,
       store: false,
-      reasoning: buildResponsesReasoning(options.reasoning?.effort),
+      // Only when Reasoning(...) set an effort; nothing is implied.
+      ...(reasoning ? { reasoning } : {}),
     };
 
     if (instructions) {
@@ -304,6 +319,7 @@ export class OpenAIProvider implements LLMProvider {
         model: options.model,
         signal: options.signal,
         onRateLimit: options.onRateLimit,
+        rateLimit: options.rateLimit ?? this.rateLimit,
       },
       (markEmitted) =>
         this.streamCompletions(
@@ -322,8 +338,9 @@ export class OpenAIProvider implements LLMProvider {
     options: ChatOptions,
     onToken?: (token: string) => void
   ): Promise<ChatResponse> {
+    const tools = this.toolsForRequest(options.tools);
     const requestBody: Record<string, unknown> = {
-      model: options.model,
+      ...(options.model ? { model: options.model } : {}),
       messages: sanitizeToolPairing(options.messages).map((msg) => ({
         role: msg.role,
         content: msg.content,
@@ -339,7 +356,8 @@ export class OpenAIProvider implements LLMProvider {
           },
         })),
       })),
-      tools: this.toolsForRequest(options.tools),
+      // An empty list is never sent: the key is left out.
+      ...(tools?.length ? { tools } : {}),
       stream: true,
       stream_options: { include_usage: true },
     };

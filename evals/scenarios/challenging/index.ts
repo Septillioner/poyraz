@@ -3,7 +3,7 @@ import { readFixtureFile, writeFixtureFile } from '../../fixtures/create-fixture
 import {
   hadRecovery,
   hadToolFailure,
-  mentionsModeSwitch,
+  toolStarts,
   wasPolicyBlocked,
 } from '../helpers.js';
 
@@ -12,7 +12,6 @@ export const challengingLargePartialRecovery: EvalScenario = {
   difficulty: 'challenging',
   budget: 'medium',
   category: 'recovery',
-  mode: 'agent',
   async setup(workspace) {
     const lines = Array.from({ length: 30 }, (_, i) => `line${i + 1} = ${i + 1};`);
     await writeFixtureFile(workspace, 'src/large.ts', lines.join('\n') + '\n');
@@ -44,7 +43,6 @@ export const challengingMultiFileRefactor: EvalScenario = {
   difficulty: 'challenging',
   budget: 'medium',
   category: 'edit',
-  mode: 'agent',
   async setup(workspace) {
     await writeFixtureFile(
       workspace,
@@ -86,7 +84,6 @@ export const challengingJsxNestedMarker: EvalScenario = {
   difficulty: 'challenging',
   budget: 'medium',
   category: 'recovery',
-  mode: 'agent',
   async setup(workspace) {
     await writeFixtureFile(
       workspace,
@@ -132,7 +129,6 @@ export const challengingCrossFileBugfix: EvalScenario = {
   difficulty: 'challenging',
   budget: 'medium',
   category: 'clarify',
-  mode: 'agent',
   async setup(workspace) {
     await writeFixtureFile(
       workspace,
@@ -176,12 +172,12 @@ export const challengingCrossFileBugfix: EvalScenario = {
   },
 };
 
-export const challengingPlanThenAgent: EvalScenario = {
-  id: 'challenging-plan-then-agent',
+export const challengingReadOnlyNoImplement: EvalScenario = {
+  id: 'challenging-read-only-no-implement',
   difficulty: 'challenging',
   budget: 'medium',
   category: 'policy',
-  mode: 'plan',
+  readOnly: true,
   async setup(workspace) {
     await writeFixtureFile(workspace, 'src/feature.ts', 'export const enabled = false;\n');
   },
@@ -196,16 +192,14 @@ export const challengingPlanThenAgent: EvalScenario = {
       configExists = false;
     }
     const blocked = wasPolicyBlocked(trace, 'edit_file');
-    const noEdit =
-      trace.events.filter((e) => e.type === 'tool.call.start' && e.toolName === 'edit_file')
-        .length === 0;
-    if (!configExists && (blocked || noEdit) && mentionsModeSwitch(trace)) {
+    const noEdit = toolStarts(trace, 'edit_file').length === 0;
+    if (!configExists && blocked) {
       return { pass: true };
     }
-    if (!configExists && (blocked || noEdit)) {
-      return { pass: true, score: 80, details: 'Blocked writes but no explicit mode guidance' };
+    if (!configExists && noEdit) {
+      return { pass: true, score: 80, details: 'No write attempted, so the policy block was not exercised' };
     }
-    return { pass: false, details: 'Should not create files in plan mode' };
+    return { pass: false, details: 'Should not create files under the read-only policy' };
   },
 };
 
@@ -214,5 +208,5 @@ export const CHALLENGING_SCENARIOS: EvalScenario[] = [
   challengingMultiFileRefactor,
   challengingJsxNestedMarker,
   challengingCrossFileBugfix,
-  challengingPlanThenAgent,
+  challengingReadOnlyNoImplement,
 ];

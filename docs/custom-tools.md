@@ -46,13 +46,14 @@ Second argument to `execute`:
 - `agent` — owning agent when wired
 - `sessionId` — session id
 - `abortSignal` — turn abort
-- `logger`, `lastReadFile`
+- `logger` — the logger of the owning agent
+- `lastReadFile` — `{ path, lineCount }` of the last read the loop saw. It is set after any successful tool whose `structured` result has `edit_ready: true`, a string `target_file` and a numeric `line_count` (the built-in `read_file` returns that shape), whatever the tool is called. Only the opt-in repair texts of `edit_file` use it
 
 ## Register vs add
 
 | API | Behavior |
 |-----|----------|
-| `RegisterTool(def)` | Registers on the shared registry and includes the tool on this agent |
+| `RegisterTool(def)` | Registers on this builder's own registry and includes the tool on this agent (the shared `toolRegistry` is not mutated) |
 | `AddTool` / `AddTools` | Attach definitions on this agent only |
 | `agent.mergeExternalTools(map)` | Add tools after build (same pattern as MCP) |
 

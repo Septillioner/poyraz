@@ -8,7 +8,6 @@ describe('createToolPolicyGuard', () => {
     guard = createToolPolicyGuard({
       maxToolRounds: 10,
       repeatCallLimit: 2,
-      deterministicMode: true,
       deniedTools: ['edit_file', 'run_terminal_cmd'],
     });
   });

@@ -42,7 +42,6 @@ describe('executeToolCall validation', () => {
   const policyGuard = createToolPolicyGuard({
     maxToolRounds: 10,
     repeatCallLimit: 3,
-    deterministicMode: true,
   });
   const context: ToolContext = {};
 
@@ -55,7 +54,8 @@ describe('executeToolCall validation', () => {
         type: 'function',
         function: { name: 'list_dir', arguments: {} },
       },
-      context
+      context,
+      { repair: { enabled: true } }
     );
 
     expect(outcome.message.content).toContain('VALIDATION_ERROR');
@@ -87,9 +87,22 @@ describe('executeToolCall validation', () => {
         type: 'function',
         function: { name: 'missing_tool', arguments: {} },
       },
-      context
+      context,
+      { repair: { enabled: true } }
     );
     expect(outcome.message.content).toContain('TOOL_NOT_FOUND');
     expect(outcome.message.content).toContain('REPAIR:');
+  });
+
+  it('adds no REPAIR text unless repair is enabled', async () => {
+    const guard = createToolPolicyGuard({ maxToolRounds: 10, repeatCallLimit: 3 });
+    const outcome = await executeToolCall(
+      tools,
+      guard,
+      { id: 'call_off', type: 'function', function: { name: 'list_dir', arguments: {} } },
+      context
+    );
+    expect(outcome.message.content).toContain('VALIDATION_ERROR');
+    expect(outcome.message.content).not.toContain('REPAIR');
   });
 });

@@ -1,5 +1,5 @@
 import type { AgentStreamEvent } from '../../domain/events.js';
-import { toolRegistry } from '../../tools/core/registry.js';
+import { toolRegistry, type ToolRegistry } from '../../tools/core/registry.js';
 import { tryParseToolError } from '../../application/chat/tool-errors.js';
 import { formatEditMetaSummary } from '../../tools/core/edit-diff.js';
 import type { ActivityStatus, ToolActivityView } from './tool-ui-consumer.js';
@@ -7,10 +7,12 @@ import type { ActivityStatus, ToolActivityView } from './tool-ui-consumer.js';
 export interface ActivityTracker {
   activities: Map<string, ToolActivityView>;
   lifecyclePhase?: string;
+  /** Where tool presentations are looked up. Omitted -> the shared `toolRegistry`; pass `agent.getToolRegistry()` to also cover tools merged into that agent (MCP). */
+  registry?: ToolRegistry;
 }
 
-export function createActivityTracker(): ActivityTracker {
-  return { activities: new Map() };
+export function createActivityTracker(registry?: ToolRegistry): ActivityTracker {
+  return { activities: new Map(), registry };
 }
 
 export function applyStreamEvent(
@@ -27,7 +29,7 @@ export function applyStreamEvent(
       return null;
 
     case 'tool.call.start': {
-      const presentation = toolRegistry.getPresentation(event.toolName);
+      const presentation = (tracker.registry ?? toolRegistry).getPresentation(event.toolName);
       const detail = presentation.summarizeArgs?.(event.args);
       const view: ToolActivityView = {
         toolCallId: event.toolCallId,
@@ -43,7 +45,7 @@ export function applyStreamEvent(
 
     case 'tool.call.result': {
       const existing = tracker.activities.get(event.toolCallId);
-      const presentation = toolRegistry.getPresentation(event.toolName);
+      const presentation = (tracker.registry ?? toolRegistry).getPresentation(event.toolName);
       let summary =
         presentation.summarizeResult?.(event.content) ??
         defaultResultSummary(event.content, event.ok);

@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import type { ChatMessage, LLMProvider, ReasoningConfig, ServiceTier, TokenUsage } from '../../domain/llm.js';
+import type { ChatMessage, ChatOptions, LLMProvider, ReasoningConfig, ServiceTier, TokenUsage } from '../../domain/llm.js';
 import type { AgentStreamEvent } from '../../domain/events.js';
 import { rateLimitStreamEvent } from '../../domain/events.js';
 import type { AgentPolicy, ErrorBreakerMode } from '../../domain/agent-policy.js';
@@ -10,53 +10,33 @@ import type { ToolContext } from '../../tools/core/types.js';
 import type { ToolPolicyGuard } from './tool-policy.js';
 import { tryParseToolError } from './tool-errors.js';
 import { executeToolCall, parseRawToolArgs } from './tool-execution.js';
+import type { RepairOptions } from './repair-instruction.js';
 import type { ToolDefinition } from '../../tools/core/types.js';
+import type {
+  ContinuationDecision,
+  ContinuationOutcome,
+  ContinuationPolicy,
+  SameToolBreakerConfig,
+} from '../agent/config.js';
+
+/** Default of `sameToolBreaker.limit`: consecutive rounds led by the same tool before the notice fires. */
 export const CONSECUTIVE_SAME_TOOL_LIMIT = 3;
 export const CONSECUTIVE_SAME_ERROR_LIMIT = 2;
 
 /**
- * Same-tool loop breaker. Off for now: it fired on legitimate work (host tools
- * arrive MCP-prefixed, so the read-only progress check never matched) and cut a
- * turn that was making real progress. Mode policy still blocks mutating tools
- * outside agent mode, `maxToolRounds` still bounds a turn, and the error
- * circuit breaker below still stops identical failures. Flip to true to restore
- * the "same tool N times in a row" NOTICE.
- */
-export const SAME_TOOL_LOOP_BREAKER_ENABLED = false;
-
-/**
- * Same-error circuit breaker. Off for now: the hard-block NOTICE inserted a user
- * message mid-history, the round that followed stripped `tool_calls` while keeping
- * `providerMeta.openai.outputItems`, and the next request replayed those
- * `function_call` items with no output — the provider answered
- * `400 No tool output found for function call`. The failures it guarded against are
- * already bounded by `repeatCallLimit` (identical tool+args), `maxToolRounds` and
- * the mode policy, so it buys little and breaks the transcript.
- *
- * Re-enable only once `sanitizeToolPairing` is in place AND the hard-block path is
- * replaced by `buildAgentSoftCircuitNotice` (which never touches tool_calls).
- */
-export const ERROR_CIRCUIT_BREAKER_ENABLED: boolean = false;
-
-/**
- * Host-owned configuration for the same-error circuit breaker. The module constant
- * above is the legacy in-repo default for callers that pass no policy (kept for
- * backwards compatibility); `AgentPolicy.errorBreaker` wins whenever it is set, and
- * an unset policy field means `'off'`.
+ * Same-error circuit breaker mode, owned by the host policy (`AgentPolicy.errorBreaker`).
+ * Unset means `'off'`: the loop never counts the streak, injects no notice and blocks no round.
  */
 export function resolveErrorBreakerMode(agentPolicy: AgentPolicy): ErrorBreakerMode {
-  if (agentPolicy.errorBreaker) return agentPolicy.errorBreaker;
-  return ERROR_CIRCUIT_BREAKER_ENABLED ? 'hard' : 'off';
+  return agentPolicy.errorBreaker ?? 'off';
 }
 
-// Tools that mutate the workspace. A round that runs one of these made real
-// progress, so it should not count toward the read-only "same tool loop"
-// breaker. In read-only modes (plan/ask) none of these are available, so the
-// breaker keeps stopping unproductive read loops early.
-const PROGRESS_TOOLS = new Set(['edit_file', 'delete_file', 'run_terminal_cmd']);
-
-function isProgressTool(toolName: string): boolean {
-  return PROGRESS_TOOLS.has(toolName);
+/** `sameToolBreaker.limit` after validation; falls back to `CONSECUTIVE_SAME_TOOL_LIMIT`. */
+export function resolveSameToolLimit(config?: SameToolBreakerConfig): number {
+  const limit = config?.limit;
+  return typeof limit === 'number' && Number.isFinite(limit) && limit >= 1
+    ? Math.floor(limit)
+    : CONSECUTIVE_SAME_TOOL_LIMIT;
 }
 
 function buildErrorCircuitNotice(toolName: string): string {
@@ -73,19 +53,45 @@ function buildToolErrorKey(toolName: string, code: string, message: string): str
 
 export interface DecisionLoopDeps {
   provider: LLMProvider;
-  model: string;
-  options: Record<string, any>;
-  tools: any[];
+  /** Sent to the provider only when set. */
+  model?: string;
+  /** Provider options. Sent only when set. */
+  options?: Record<string, any>;
+  /** Fallback tool schemas, used only when `handlers.compileRequest` is not provided. */
+  tools?: any[];
   policy: { maxToolRounds: number };
   promptCacheKey?: string;
   promptCacheRetention?: 'in_memory' | '24h';
   reasoning?: ReasoningConfig;
   serviceTier?: ServiceTier;
   agentPolicy: AgentPolicy;
+  /** `config.repair`. Failed tool results carry repair text only when `enabled`. */
+  repair?: RepairOptions;
+  /** `config.sameToolBreaker`. Off unless `enabled: true`. */
+  sameToolBreaker?: SameToolBreakerConfig;
+  /**
+   * `config.progressTools`: a round in which one of these tools succeeded (without leading the round)
+   * resets the same-tool streak. Default: none.
+   */
+  progressTools?: readonly string[];
+  /** `config.continuation`. Consulted after every accepted tool-less reply; default: none (the reply ends the turn). */
+  continuation?: ContinuationPolicy;
+}
+
+/** What goes to the provider for one round; the minimum the loop needs from a request compiler. */
+export interface CompiledRound {
+  messages: ChatMessage[];
+  tools: any[];
 }
 
 export interface DecisionLoopHandlers {
   getMessages: () => ChatMessage[];
+  /**
+   * Compiles the request for the next round (messages, filtered tool schemas, and
+   * whatever the caller records about it). When set, it is the single source of what
+   * is sent; `getMessages` and `deps.tools` are then only used for bookkeeping/fallback.
+   */
+  compileRequest?: () => CompiledRound;
   addMessage: (message: ChatMessage) => void;
   onEvent?: (event: AgentStreamEvent) => void;
   onUsage?: (usage: TokenUsage) => void;
@@ -94,7 +100,16 @@ export interface DecisionLoopHandlers {
   beforeRound?: () => Promise<void>;
 
   getPromptCacheKey?: () => string | undefined;
+  /** Session the agent is bound to; handed to the continuation policy. Read at decision time. */
+  getSessionId?: () => string | undefined;
   signal?: AbortSignal;
+}
+
+export interface DecisionLoopResult {
+  content: string;
+  usage?: TokenUsage;
+  /** Set when a `ContinuationPolicy` was configured for the turn. */
+  continuation?: ContinuationOutcome;
 }
 
 function parseToolCallArgs(rawArgs: unknown): Record<string, unknown> {
@@ -181,7 +196,7 @@ export async function runDecisionLoop(
   toolDefs: Record<string, ToolDefinition>,
   policyGuard: ToolPolicyGuard,
   handlers: DecisionLoopHandlers
-): Promise<{ content: string; usage?: TokenUsage }> {
+): Promise<DecisionLoopResult> {
   let round = 0;
   let lastRoundToolName: string | undefined;
   let consecutiveSameTool = 0;
@@ -189,11 +204,22 @@ export async function runDecisionLoop(
   let lastErrorKey: string | undefined;
   let consecutiveSameError = 0;
   let lastUsage: TokenUsage | undefined;
+  // `context.usage` of the request in flight. A tool-less reply may still be followed by another
+  // round (gate retry, continuation), so its `final` flag is only known once that is decided.
+  let pendingUsage: ((final: boolean) => void) | undefined;
+  const settleUsage = (final: boolean) => pendingUsage?.(final);
   const gateRetries = new Map<number, number>();
 
   const isToolLoopBlocked = () => circuitBreakerNoticeSent;
   const bufferTextUntilAccepted = Boolean(deps.agentPolicy.bufferTextUntilAccepted);
   const errorBreakerMode = resolveErrorBreakerMode(deps.agentPolicy);
+  const sameToolBreakerEnabled = deps.sameToolBreaker?.enabled === true;
+  const sameToolLimit = resolveSameToolLimit(deps.sameToolBreaker);
+  const progressTools = new Set(deps.progressTools ?? []);
+  const continuationPolicy = deps.continuation;
+  let continuations = 0;
+  const outcome = (extra?: Pick<ContinuationOutcome, 'reason' | 'data'>): ContinuationOutcome | undefined =>
+    continuationPolicy ? { continuations, ...extra } : undefined;
 
   try {
     outer: while (round < deps.policy.maxToolRounds) {
@@ -205,19 +231,22 @@ export async function runDecisionLoop(
       handlers.onEvent?.({ type: 'lifecycle', phase: 'thinking' });
 
       let textBuffer = '';
+      const compiled = handlers.compileRequest?.();
+      // `model` stays out of the request when none is configured (`ChatOptions` still types it as required).
+      const request: Omit<ChatOptions, 'model'> & { model?: string } = {
+        ...(deps.model ? { model: deps.model } : {}),
+        messages: compiled?.messages ?? handlers.getMessages(),
+        ...(deps.options ? { options: deps.options } : {}),
+        tools: compiled?.tools ?? deps.tools ?? [],
+        promptCacheKey: handlers.getPromptCacheKey?.() ?? deps.promptCacheKey,
+        promptCacheRetention: deps.promptCacheRetention,
+        reasoning: deps.reasoning,
+        serviceTier: deps.serviceTier,
+        signal: handlers.signal,
+        onRateLimit: (notice) => handlers.onEvent?.(rateLimitStreamEvent(notice)),
+      };
       const response = await deps.provider.chat(
-        {
-          model: deps.model,
-          messages: handlers.getMessages(),
-          options: deps.options,
-          tools: deps.tools,
-          promptCacheKey: handlers.getPromptCacheKey?.() ?? deps.promptCacheKey,
-          promptCacheRetention: deps.promptCacheRetention,
-          reasoning: deps.reasoning,
-          serviceTier: deps.serviceTier,
-          signal: handlers.signal,
-          onRateLimit: (notice) => handlers.onEvent?.(rateLimitStreamEvent(notice)),
-        },
+        request as ChatOptions,
         (token) => {
           if (bufferTextUntilAccepted) {
             textBuffer += token;
@@ -231,24 +260,33 @@ export async function runDecisionLoop(
       );
 
       if (response.usage) {
-        lastUsage = response.usage;
-        handlers.onUsage?.(response.usage);
-        // Published before the abort check so a cancelled turn still reports the
-        // request it already paid for. The prompt is measured on the history that
-        // was actually sent, before this round's assistant message is appended.
-        handlers.onEvent?.({
-          type: 'context.usage',
-          promptTokens: response.usage.promptTokens,
-          completionTokens: response.usage.completionTokens,
-          totalTokens: response.usage.totalTokens,
-          cachedTokens: response.usage.cachedTokens,
-          round,
-          final: isToolLoopBlocked() || !response.tool_calls?.length,
-        });
+        const usage = response.usage;
+        const usageRound = round;
+        lastUsage = usage;
+        handlers.onUsage?.(usage);
+        // Published even when the turn is cancelled right after: a cancelled turn still reports
+        // the request it already paid for. The prompt is measured on the history that was
+        // actually sent, before this round's assistant message is appended.
+        pendingUsage = (final) => {
+          pendingUsage = undefined;
+          handlers.onEvent?.({
+            type: 'context.usage',
+            promptTokens: usage.promptTokens,
+            completionTokens: usage.completionTokens,
+            totalTokens: usage.totalTokens,
+            cachedTokens: usage.cachedTokens,
+            round: usageRound,
+            final,
+          });
+        };
       }
       assertNotAborted(handlers.signal);
 
       const toolCalls = isToolLoopBlocked() ? undefined : response.tool_calls;
+
+      // `final` means no further request follows. Another round only runs while the round budget lasts.
+      const anotherRoundPossible = round < deps.policy.maxToolRounds;
+      if (toolCalls?.length) settleUsage(!anotherRoundPossible);
 
       // Dropping `tool_calls` without dropping the raw provider output would leave
       // `function_call` items the next request replays with nothing to answer them.
@@ -276,6 +314,7 @@ export async function runDecisionLoop(
               gateIndex,
               retries: retries + 1,
             });
+            settleUsage(!anotherRoundPossible);
             handlers.addMessage({ role: 'user', content: verdict.notice });
             continue outer;
           }
@@ -285,14 +324,75 @@ export async function runDecisionLoop(
             logger.warn('Response gate: retry budget exhausted; sanitizing', { gateIndex });
             handlers.addMessage({ role: 'assistant', content: sanitized });
             flushTextDelta(handlers, sanitized);
-            return { content: sanitized, usage: response.usage ?? lastUsage };
+            settleUsage(true);
+            return { content: sanitized, usage: response.usage ?? lastUsage, continuation: outcome() };
           }
         }
 
         if (bufferTextUntilAccepted) {
           flushTextDelta(handlers, textBuffer || response.content || '');
         }
-        return { content: response.content, usage: response.usage ?? lastUsage };
+
+        if (!continuationPolicy) {
+          settleUsage(true);
+          return { content: response.content, usage: response.usage ?? lastUsage };
+        }
+
+        const cap = continuationPolicy.maxContinuations;
+        const remaining = typeof cap === 'number' ? Math.max(0, cap - continuations) : undefined;
+        let decision: ContinuationDecision;
+        try {
+          decision = await continuationPolicy.evaluate({
+            content: response.content ?? '',
+            round,
+            continuations,
+            remaining,
+            succeededTools: policyGuard.succeededTools(),
+            usage: response.usage,
+            messages: [...handlers.getMessages()],
+            sessionId: handlers.getSessionId?.(),
+            signal: handlers.signal,
+          });
+        } catch (error) {
+          // A cancelled turn wins over whatever the policy was doing when it was cancelled.
+          assertNotAborted(handlers.signal);
+          throw error;
+        }
+        assertNotAborted(handlers.signal);
+
+        if (decision.kind === 'continue') {
+          if (remaining === 0) {
+            logger.info('Continuation stopped: maxContinuations reached', { continuations, cap });
+            settleUsage(true);
+            return {
+              content: response.content,
+              usage: response.usage ?? lastUsage,
+              continuation: outcome({ reason: 'max-continuations' }),
+            };
+          }
+          if (typeof decision.notice === 'string' && decision.notice.trim()) {
+            continuations++;
+            logger.info('Continuation: another round', { continuations, round });
+            settleUsage(!anotherRoundPossible);
+            handlers.addMessage({ role: 'user', content: decision.notice });
+            continue outer;
+          }
+          logger.warn('Continuation policy returned an empty notice; ending the turn');
+        }
+
+        settleUsage(true);
+        return {
+          content: response.content,
+          usage: response.usage ?? lastUsage,
+          continuation: outcome(
+            decision.kind === 'stop'
+              ? {
+                  ...(decision.reason !== undefined ? { reason: decision.reason } : {}),
+                  ...(decision.data !== undefined ? { data: decision.data } : {}),
+                }
+              : undefined
+          ),
+        };
       }
       if (bufferTextUntilAccepted) {
         flushTextDelta(handlers, textBuffer || response.content || '');
@@ -300,22 +400,7 @@ export async function runDecisionLoop(
 
       const roundToolNames = toolCalls.map((tc) => toolRegistry.resolveAlias(tc.function.name));
       const roundToolName = roundToolNames[0];
-      const leadingIsProgressTool = isProgressTool(roundToolName);
-      const roundMadeProgress = roundToolNames.some(isProgressTool);
-
-      if (roundMadeProgress && !leadingIsProgressTool) {
-        // Mixed productive round (e.g. read_file + edit_file): a read that feeds
-        // an edit is progress, not a loop. Reset the read-oriented streak so the
-        // breaker does not trip on interleaved read/edit work. Streaks led by a
-        // mutating tool still accumulate normally below to catch true edit loops.
-        lastRoundToolName = undefined;
-        consecutiveSameTool = 0;
-      } else if (roundToolName === lastRoundToolName) {
-        consecutiveSameTool++;
-      } else {
-        lastRoundToolName = roundToolName;
-        consecutiveSameTool = 1;
-      }
+      const succeededProgressTools = new Set<string>();
 
       let errorCircuitToolName: string | undefined;
 
@@ -336,7 +421,8 @@ export async function runDecisionLoop(
           toolDefs,
           policyGuard,
           { ...toolCall, id: toolCallId },
-          handlers.buildToolContext()
+          handlers.buildToolContext(),
+          { repair: deps.repair }
         );
 
         const parsedError = tryParseToolError(toolOutcome.message.content);
@@ -357,6 +443,8 @@ export async function runDecisionLoop(
         handlers.addMessage(toolOutcome.message);
         assertNotAborted(handlers.signal);
 
+        if (ok && progressTools.has(toolName)) succeededProgressTools.add(toolName);
+
         if (parsedError) {
           const errorKey = buildToolErrorKey(toolName, parsedError.code, parsedError.message);
           if (errorKey === lastErrorKey) {
@@ -371,6 +459,25 @@ export async function runDecisionLoop(
         } else {
           lastErrorKey = undefined;
           consecutiveSameError = 0;
+        }
+      }
+
+      if (sameToolBreakerEnabled) {
+        const leadingIsProgressTool = progressTools.has(roundToolName);
+        const roundMadeProgress = succeededProgressTools.size > 0;
+
+        if (roundMadeProgress && !leadingIsProgressTool) {
+          // Mixed productive round (e.g. a read that feeds a progress tool): that is
+          // progress, not a loop. Reset the streak so the breaker does not trip on
+          // interleaved work. Streaks led by a progress tool still accumulate normally
+          // below to catch true edit loops.
+          lastRoundToolName = undefined;
+          consecutiveSameTool = 0;
+        } else if (roundToolName === lastRoundToolName) {
+          consecutiveSameTool++;
+        } else {
+          lastRoundToolName = roundToolName;
+          consecutiveSameTool = 1;
         }
       }
 
@@ -400,7 +507,7 @@ export async function runDecisionLoop(
         }
       }
 
-      if (SAME_TOOL_LOOP_BREAKER_ENABLED && consecutiveSameTool >= CONSECUTIVE_SAME_TOOL_LIMIT) {
+      if (sameToolBreakerEnabled && consecutiveSameTool >= sameToolLimit) {
         logger.warn('Circuit breaker triggered', {
           toolName: roundToolName,
           consecutiveSameTool,
@@ -423,9 +530,12 @@ export async function runDecisionLoop(
 
     const errorMsg = `Tool loop limit reached (${deps.policy.maxToolRounds}). Stopping to avoid unstable behavior.`;
     logger.warn(errorMsg);
+    settleUsage(true);
     handlers.addMessage({ role: 'assistant', content: errorMsg });
-    return { content: errorMsg, usage: lastUsage };
+    return { content: errorMsg, usage: lastUsage, continuation: outcome() };
   } catch (error) {
+    // The turn ends here (abort or failure): the request already paid for is still reported.
+    settleUsage(true);
     if (error instanceof ChatAbortedError) {
       completePendingToolResponses(handlers);
     }

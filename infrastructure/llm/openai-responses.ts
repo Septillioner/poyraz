@@ -40,11 +40,14 @@ export function isResponsesUnsupportedError(error: unknown): boolean {
   return MODEL_OR_ENDPOINT_UNSUPPORTED.test(message);
 }
 
-export function buildResponsesReasoning(effort?: ReasoningEffort): {
-  summary: typeof RESPONSES_REASONING_SUMMARY;
-  effort?: ReasoningEffort;
-} {
-  return effort ? { summary: RESPONSES_REASONING_SUMMARY, effort } : { summary: RESPONSES_REASONING_SUMMARY };
+/** `reasoning` field of a Responses request: only when an effort was set, otherwise `undefined` (no field). */
+export function buildResponsesReasoning(effort?: ReasoningEffort):
+  | {
+      summary: typeof RESPONSES_REASONING_SUMMARY;
+      effort: ReasoningEffort;
+    }
+  | undefined {
+  return effort ? { summary: RESPONSES_REASONING_SUMMARY, effort } : undefined;
 }
 
 export interface ResponsesToolDefinition {

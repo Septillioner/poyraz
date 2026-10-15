@@ -11,7 +11,6 @@ export const mediumJsxRename: EvalScenario = {
   difficulty: 'medium',
   budget: 'medium',
   category: 'edit',
-  mode: 'agent',
   async setup(workspace) {
     await writeFixtureFile(
       workspace,
@@ -47,7 +46,6 @@ export const mediumTwoFileMerge: EvalScenario = {
   difficulty: 'medium',
   budget: 'medium',
   category: 'chain',
-  mode: 'agent',
   async setup(workspace) {
     await writeFixtureFile(workspace, 'pkg/a.txt', 'alpha\n');
     await writeFixtureFile(workspace, 'pkg/b.txt', 'beta\n');
@@ -74,7 +72,6 @@ export const mediumListDirRecovery: EvalScenario = {
   difficulty: 'medium',
   budget: 'medium',
   category: 'recovery',
-  mode: 'agent',
   async setup(workspace) {
     await writeFixtureFile(workspace, 'data/item.txt', 'x\n');
   },
@@ -98,7 +95,6 @@ export const mediumCssPartial: EvalScenario = {
   difficulty: 'medium',
   budget: 'medium',
   category: 'edit',
-  mode: 'agent',
   async setup(workspace) {
     await writeFixtureFile(
       workspace,
@@ -126,7 +122,6 @@ export const mediumReadBeforeEdit: EvalScenario = {
   difficulty: 'medium',
   budget: 'medium',
   category: 'chain',
-  mode: 'agent',
   async setup(workspace) {
     await writeFixtureFile(workspace, 'src/util.ts', 'export const VERSION = 1;\n');
   },
@@ -148,7 +143,6 @@ export const mediumGrepThenEdit: EvalScenario = {
   difficulty: 'medium',
   budget: 'medium',
   category: 'chain',
-  mode: 'agent',
   async setup(workspace) {
     await writeFixtureFile(workspace, 'lib/math.ts', 'export function add(a: number, b: number) { return a + b; }\n');
     await writeFixtureFile(workspace, 'lib/string.ts', 'export function join(a: string, b: string) { return a + b; }\n');

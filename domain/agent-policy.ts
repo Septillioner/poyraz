@@ -34,7 +34,7 @@ export interface AgentPolicy {
   errorBreaker?: ErrorBreakerMode;
   /** Reason returned when a tool is denied by allowedTools. */
   deniedToolReason?: string;
-  /** Buffer text.delta until a text-only reply is accepted (e.g. plan code-dump gate). */
+  /** Buffer text.delta until a text-only reply is accepted (e.g. when a response gate may still reject it). */
   bufferTextUntilAccepted?: boolean;
   /** Per-tool success cap within a single user turn (e.g. { write_file: 1 }). */
   perTurnToolLimits?: Record<string, number>;
@@ -51,7 +51,8 @@ export function resolvePolicyTools(
   baseTools: string[],
   policy: AgentPolicy
 ): string[] {
-  if (policy.allowedTools === 'all') return [...baseTools];
+  // Anything but an explicit list (`'all'`, or an unset field) leaves every tool allowed.
+  if (!Array.isArray(policy.allowedTools)) return [...baseTools];
   const allowed = new Set(policy.allowedTools);
   return baseTools.filter((tool) => allowed.has(tool));
 }

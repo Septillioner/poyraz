@@ -79,7 +79,10 @@ async function survivesRateLimit(
   const started = Date.now();
 
   try {
-    const provider = new OpenAIProvider(fake.url, 'test-key', undefined, { completionsOnly });
+    const provider = new OpenAIProvider(fake.url, 'test-key', undefined, {
+      completionsOnly,
+      rateLimit: { enabled: true, maxWaits: 5 },
+    });
     const response = await provider.chat(
       { model: MODEL, messages: [{ role: 'user', content: 'merhaba' }], onRateLimit: (n) => notices.push(n) },
       (token) => tokens.push(token)
@@ -111,7 +114,10 @@ async function stopsWhenAborted(): Promise<void> {
   const controller = new AbortController();
 
   try {
-    const provider = new OpenAIProvider(fake.url, 'test-key', undefined, { completionsOnly: true });
+    const provider = new OpenAIProvider(fake.url, 'test-key', undefined, {
+      completionsOnly: true,
+      rateLimit: { enabled: true, maxWaits: 5 },
+    });
     const pending = provider.chat(
       {
         model: MODEL,

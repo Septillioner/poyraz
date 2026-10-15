@@ -112,7 +112,7 @@ const TOOL_GUIDANCE: Record<string, ToolGuidance> = {
       'Small files (~150 lines) with UI structure changes — full file in code_edit',
     ],
     whenNotToUse: [
-      'Plan or Ask mode (read-only) — tell user to switch to Agent mode',
+      'The active policy denies write tools (read-only) — say so instead of retrying',
       'Showing code only when user said "just show me" without writing files',
       'Deleting an entire file — prefer delete_file when appropriate',
       'Marker-less snippet on existing file — rejected; use markers or full rewrite',
@@ -183,7 +183,7 @@ const TOOL_GUIDANCE: Record<string, ToolGuidance> = {
       'Long-running dev servers — cd into project first, then npm run dev with is_background: true',
     ],
     whenNotToUse: [
-      'Plan or Ask mode',
+      'The active policy denies this tool (read-only)',
       'npm run dev with is_background: false — blocked by policy',
       'Interactive prompts without non-interactive flags',
       'mkdir dir1 dir2 on Windows — use separate mkdir calls or mkdir parent && cd parent && mkdir dir1 && mkdir dir2',
@@ -205,7 +205,7 @@ const TOOL_GUIDANCE: Record<string, ToolGuidance> = {
       'Clean up generated artifacts when appropriate',
     ],
     whenNotToUse: [
-      'Plan or Ask mode',
+      'The active policy denies this tool (read-only)',
       'Deleting without user intent or policy allowance',
     ],
     examples: [

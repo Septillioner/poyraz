@@ -10,7 +10,7 @@ import {
   type ModelProfile,
   type ProviderApiKeys,
 } from '../domain/model-profile.js';
-import type { AgentPolicy } from '../domain/agent-policy.js';
+import type { PolicyConfig } from '../application/agent/config.js';
 import { createLLMProvider } from '../infrastructure/llm/create-provider.js';
 import { gradeEfficiency } from './graders/efficiency-grader.js';
 import { runOutcomeCheck } from './graders/outcome-grader.js';
@@ -42,6 +42,24 @@ const PROVIDER_ENV_KEYS: Record<ModelProfile['provider'], string> = {
 };
 
 const MODEL_LIKE = /^[a-z0-9][a-z0-9._-]*$/i;
+
+/**
+ * A clean `AgentBuilder()` has every feature off, so the eval harness spells out what it measures:
+ * the system text, the provider options, repair / same-tool breaker / error breaker and the
+ * tool-round budget. Change these here, not in the library defaults.
+ */
+const EVAL_SYSTEM_PROMPT =
+  'You are a coding agent working in the current workspace. Use the available tools to complete the task.';
+
+const EVAL_READ_ONLY_SYSTEM_PROMPT =
+  'You are a coding agent working in the current workspace under a read-only policy. ' +
+  'You may read, list and search files, but you must not create, modify or delete anything. ' +
+  'If asked to change files, explain that writes are disabled and describe what you would do instead.';
+
+/** Sent explicitly now; the library no longer adds an implicit temperature. */
+const EVAL_OPTIONS = { temperature: 0.2 };
+
+const READ_ONLY_TOOLS = ['read_file', 'list_dir', 'glob_file_search', 'grep'];
 
 const DENIED_READ_ONLY =
   'This tool is disabled under the active policy. Writes and commands are blocked.';
@@ -88,48 +106,17 @@ function providerKeysFromProcess(): ProviderApiKeys {
   };
 }
 
-function policyForEvalMode(mode: NonNullable<EvalScenario['mode']>): AgentPolicy {
-  if (mode === 'plan') {
+function policyForScenario(scenario: EvalScenario): PolicyConfig {
+  if (scenario.readOnly) {
     return {
-      id: 'plan',
-      allowedTools: ['read_file', 'list_dir', 'glob_file_search', 'grep'],
+      id: 'read-only',
+      allowedTools: READ_ONLY_TOOLS,
       hardBlockDeniedTools: true,
       deniedToolReason: DENIED_READ_ONLY,
+      errorBreaker: 'soft',
     };
   }
-  if (mode === 'ask') {
-    return {
-      id: 'ask',
-      allowedTools: ['read_file', 'list_dir', 'glob_file_search', 'grep'],
-      hardBlockDeniedTools: true,
-      deniedToolReason: DENIED_READ_ONLY,
-    };
-  }
-  if (mode === 'chat') {
-    return {
-      id: 'chat',
-      allowedTools: [],
-      hardBlockDeniedTools: true,
-      deniedToolReason: DENIED_READ_ONLY,
-    };
-  }
-  return {
-    id: 'agent',
-    allowedTools: 'all',
-  };
-}
-
-function systemPromptForEvalMode(mode: NonNullable<EvalScenario['mode']>): string {
-  if (mode === 'plan') {
-    return 'Active mode: PLAN. Read-only exploration; do not implement.';
-  }
-  if (mode === 'ask') {
-    return 'Active mode: ASK. Read-only answers only.';
-  }
-  if (mode === 'chat') {
-    return 'Active mode: CHAT. No tools.';
-  }
-  return 'Active mode: AGENT. Use tools to complete the task.';
+  return { id: 'eval', allowedTools: 'all', errorBreaker: 'soft' };
 }
 
 function resolveEvalProfile(model: string): ModelProfile {
@@ -245,23 +232,19 @@ async function runScenario(scenario: EvalScenario, model: string): Promise<Scena
     const apiKey = resolveApiKeyForProfile(profile, providerKeysFromProcess());
     const provider = createLLMProvider(profile, apiKey);
 
-    const agentBuilder = new AgentBuilder()
+    const agent = new AgentBuilder()
       .Name('EvalAgent')
       .Provider(provider)
       .WithModelProfile(profile)
       .ApiKey(apiKey)
+      .Options(EVAL_OPTIONS)
+      .SystemPrompt(scenario.readOnly ? EVAL_READ_ONLY_SYSTEM_PROMPT : EVAL_SYSTEM_PROMPT)
       .DefaultSystemTools({ read: true, write: true, execute: false, grep: true })
-      .RoutingPolicy({ maxToolRounds: 15, repeatCallLimit: 3, deterministicMode: true });
-
-    if (scenario.mode) {
-      agentBuilder.SystemPrompt(systemPromptForEvalMode(scenario.mode));
-    }
-
-    const agent = agentBuilder.Build();
-
-    if (scenario.mode) {
-      agent.setPolicy(policyForEvalMode(scenario.mode));
-    }
+      .RoutingPolicy({ maxToolRounds: 15, repeatCallLimit: 3 })
+      .Repair(true)
+      .SameToolBreaker(true)
+      .Policy(policyForScenario(scenario))
+      .Build();
 
     await agent.init();
 

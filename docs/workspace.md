@@ -1,15 +1,16 @@
 # Workspace
 
-Workspace trust, project `.poyraz/` settings, and log-directory selection are host concerns. The library only accepts an optional file-logging config:
+Workspace trust, project settings and log-directory selection are host concerns. The library only accepts an optional file-logging config, either per agent or process-wide:
 
 ```ts
-import { configureFileLogging, setActiveWorkspaceRoot } from 'poyraz';
+import { AgentBuilder, configureFileLogging, setActiveWorkspaceRoot } from 'poyraz';
 
-// Host decides trust + path:
-configureFileLogging({ enabled: true, logDir: '/path/to/project/.poyraz/log' });
+// Per agent (preferred): the agent's own logger and chat debug files.
+new AgentBuilder().Provider(provider).FileLogging({ enabled: true, logDir: '/path/to/project/log' }).ChatDebugLog().Build();
+
+// Process-wide, for code that logs through the shared logger outside an agent call:
+configureFileLogging({ enabled: true, logDir: '/path/to/project/log' });
 setActiveWorkspaceRoot('/path/to/project'); // used by shell tools for cwd resolution
 ```
 
-Chat debug JSON logs are written under the configured log dir when file logging is enabled.
-
-For the reference trust prompt and `POYRAZ_TRUST_WORKSPACE` override, see `poyraz-cli`.
+Chat debug JSON logs (`ChatDebugLog()`) are written under the agent's log dir, falling back to the process-wide dir. See [Rate limit and logging](rate-limit-and-logging.md#logging).

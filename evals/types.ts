@@ -59,7 +59,11 @@ export interface EvalScenario {
   budget: EvalBudget;
   category: string;
   prompt: string;
-  mode?: 'agent' | 'plan' | 'ask' | 'chat';
+  /**
+   * Run the agent under a read-only `AgentPolicy` (only read/list/search tools allowed, writes
+   * hard-blocked). Omitted -> every selected tool is allowed.
+   */
+  readOnly?: boolean;
   setup: (workspace: string) => Promise<void>;
   checkOutcome: (workspace: string, trace: EvalTrace) => OutcomeCheck | Promise<OutcomeCheck>;
 }
