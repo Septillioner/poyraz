@@ -1,4 +1,4 @@
-import type { ChatMessage, TokenUsage } from '../../domain/llm.js';
+import { calculateTokenCost, type ChatMessage, type TokenPricing, type TokenUsage } from '../../domain/llm.js';
 import {
   CONTEXT_CATEGORIES,
   emptyCategoryTokens,
@@ -128,11 +128,16 @@ export function computeDrift(estimateTotal: number, realTotal: number): ContextD
 }
 
 /** Pairs the pre-send estimate with the provider-reported usage of the same request. */
-export function completeRecord(record: ContextRequestRecord, usage: TokenUsage): ContextRequestRecord {
+export function completeRecord(
+  record: ContextRequestRecord,
+  usage: TokenUsage,
+  pricing?: TokenPricing
+): ContextRequestRecord {
   return {
     ...record,
     real: { ...usage },
     drift: computeDrift(record.estimate.total, usage.promptTokens),
+    ...(pricing ? { cost: calculateTokenCost(usage, pricing) } : {}),
   };
 }
 

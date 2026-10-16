@@ -1,5 +1,14 @@
 import { createLogger, logger, scopeToLogger, type Logger } from '../../shared/logger.js';
-import type { ChatMessage, LLMProvider, ReasoningConfig, ServiceTier, TokenUsage } from '../../domain/llm.js';
+import {
+  calculateTokenCost,
+  type ChatMessage,
+  type LLMProvider,
+  type ReasoningConfig,
+  type ServiceTier,
+  type TokenCostTotals,
+  type TokenPricing,
+  type TokenUsage,
+} from '../../domain/llm.js';
 import type { ModelProfile } from '../../domain/model-profile.js';
 import { createLLMProvider } from '../../infrastructure/llm/create-provider.js';
 import { inferProviderFromHost } from '../../domain/model-profile.js';
@@ -63,6 +72,7 @@ import {
 } from './tool-resolver.js';
 import {
   AgentConfigError,
+  normalizeTokenPricing,
   normalizeMaxToolRounds,
   normalizeReasoning,
   normalizeServiceTier,
@@ -119,6 +129,8 @@ export class Agent {
   private estimator: TokenEstimator = createTokenEstimator();
   private context = createMessageContext({});
   private stats = createTokenStats();
+  /** Optional price table; request records retain the price result at the moment usage arrives. */
+  private tokenPricing?: TokenPricing;
   /** Usage of the most recent model request; what currently occupies the window. */
   private lastRequestUsage?: TokenUsage;
   /** Request compiled for the round in flight; paired with provider usage when it arrives. */
@@ -159,6 +171,8 @@ export class Agent {
       perTurnToolLimits: this.policy.perTurnToolLimits,
     };
     this.estimator = createTokenEstimator(config.tokenEstimator);
+    this.tokenPricing = normalizeTokenPricing(config.tokenPricing);
+    if (this.tokenPricing) this.config.tokenPricing = { ...this.tokenPricing };
     this.context = createMessageContext({
       limit: config.contextLimit,
       estimator: this.estimator,
@@ -557,7 +571,7 @@ export class Agent {
     const pending = this.pendingRecord;
     this.pendingRecord = undefined;
     if (!pending) return;
-    const record = completeRecord(pending, usage);
+    const record = completeRecord(pending, usage, this.tokenPricing);
     this.lastRealRecord = record;
     this.contextRecords.push(record);
     if (this.contextRecords.length > MAX_CONTEXT_RECORDS) this.contextRecords.shift();
@@ -585,7 +599,11 @@ export class Agent {
 
   /** Recent requests (newest last, max 20) with their estimate, real usage and drift. */
   getContextRecords(): ContextRequestRecord[] {
-    return this.contextRecords.map((record) => ({ ...record }));
+    return this.contextRecords.map((record) => ({
+      ...record,
+      ...(record.real ? { real: { ...record.real } } : {}),
+      ...(record.cost ? { cost: { ...record.cost } } : {}),
+    }));
   }
 
   /** Meter from the local estimate of the current context. Needs no provider call. */
@@ -636,6 +654,26 @@ export class Agent {
       current: this.stats.getCurrent(),
       session: this.stats.getSessionTotal(),
     };
+  }
+
+  /** Current-turn and session costs from provider-reported usage, or `undefined` until prices are configured. */
+  getUsageCosts(): TokenCostTotals | undefined {
+    if (!this.tokenPricing) return undefined;
+    return {
+      current: calculateTokenCost(this.stats.getCurrent(), this.tokenPricing),
+      session: calculateTokenCost(this.stats.getSessionTotal(), this.tokenPricing),
+    };
+  }
+
+  getTokenPricing(): TokenPricing | undefined {
+    return this.tokenPricing ? { ...this.tokenPricing } : undefined;
+  }
+
+  /** Changes the price table for future request records and aggregate cost reads. Omit to disable cost calculation. */
+  setTokenPricing(pricing?: TokenPricing): void {
+    this.tokenPricing = normalizeTokenPricing(pricing);
+    if (this.tokenPricing) this.config.tokenPricing = { ...this.tokenPricing };
+    else delete this.config.tokenPricing;
   }
 
   /**
@@ -805,6 +843,7 @@ export class Agent {
       onSummarized: summarization?.onSummarized
         ? (summarized) => summarization.onSummarized!({ ...summarized, sessionId: this.sessionId })
         : undefined,
+      onUsage: (usage) => this.recordExternalUsage(usage),
     });
     // The last real request described the history from before the summary.
     this.lastRealRecord = undefined;

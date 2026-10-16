@@ -1,6 +1,6 @@
 import type { ChatHandlers } from '../../domain/events.js';
 import { emitEvent, rateLimitStreamEvent } from '../../domain/events.js';
-import type { ChatMessage, LLMProvider, ServiceTier } from '../../domain/llm.js';
+import type { ChatMessage, LLMProvider, ServiceTier, TokenUsage } from '../../domain/llm.js';
 import { logger } from '../../shared/logger.js';
 import type { OnSummarizedHook, SummarizedContext, SummaryPromptBuilder } from '../agent/config.js';
 import type { MessageContext } from './message-context.js';
@@ -36,6 +36,8 @@ export interface SummarizeOptions {
   toolResultMaxChars?: number;
   /** Called right after a summary replaced the history (see `SummarizationConfig.onSummarized`). */
   onSummarized?: OnSummarizedHook;
+  /** Provider usage of the summary request, when it was reported. */
+  onUsage?: (usage: TokenUsage) => void;
 }
 
 /** Token estimate of the messages in `context` (message text and tool calls, no tool schemas). */
@@ -174,6 +176,7 @@ export async function summarizeHistory(
       signal: handlers?.signal,
       onRateLimit: (notice) => emitEvent(handlers, rateLimitStreamEvent(notice)),
     });
+    if (response.usage) options.onUsage?.(response.usage);
 
     const summaryMessage: ChatMessage = {
       role: 'user',

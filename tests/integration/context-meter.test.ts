@@ -128,6 +128,31 @@ describe('context compile and meter (mock-llm)', () => {
     expect(sum(meter.categories)).toBe(meter.total);
   });
 
+  it('calculates request and aggregate cost from provider usage without double-charging cached input', async () => {
+    const llm = mockLLM([
+      {
+        tool_calls: [toolCall('echo', { text: 'ping' }, 'call_echo')],
+        usage: { promptTokens: 100, cachedTokens: 60, completionTokens: 10, totalTokens: 110 },
+      },
+      { content: 'all done', usage: { promptTokens: 300, cachedTokens: 100, completionTokens: 25, totalTokens: 325 } },
+    ]);
+    const agent = makeAgent(llm, { tokenPricing: { input: 0.01, cache: 0.002, output: 0.03 } });
+    await agent.init();
+
+    await agent.chat('ping me');
+
+    const records = agent.getContextRecords();
+    expect(records.map((record) => record.cost?.totalCost)).toEqual([expect.closeTo(0.82), expect.closeTo(2.95)]);
+    expect(records[0].cost).toMatchObject({ inputTokens: 40, cacheTokens: 60, outputTokens: 10 });
+    const costs = agent.getUsageCosts()!;
+    expect(costs.current).toMatchObject({ inputTokens: 240, cacheTokens: 160, outputTokens: 35 });
+    expect(costs.current.inputCost).toBeCloseTo(2.4);
+    expect(costs.current.cacheCost).toBeCloseTo(0.32);
+    expect(costs.current.outputCost).toBeCloseTo(1.05);
+    expect(costs.current.totalCost).toBeCloseTo(3.77);
+    expect(costs.session).toEqual(costs.current);
+  });
+
   it('estimate meter follows the live context and is independent of the real meter', async () => {
     const llm = mockLLM([{ content: 'hello there', usage: { promptTokens: 50, completionTokens: 5, totalTokens: 55 } }]);
     const agent = makeAgent(llm);

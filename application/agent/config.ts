@@ -1,4 +1,12 @@
-import type { ChatMessage, LLMProvider, ReasoningConfig, ServiceTier, TokenUsage } from '../../domain/llm.js';
+import {
+  isTokenPricing,
+  type ChatMessage,
+  type LLMProvider,
+  type ReasoningConfig,
+  type ServiceTier,
+  type TokenPricing,
+  type TokenUsage,
+} from '../../domain/llm.js';
 import { isReasoningEffort, isServiceTier } from '../../domain/llm.js';
 import { DEFAULT_AGENT_POLICY, type AgentPolicy } from '../../domain/agent-policy.js';
 import type { McpServerDef } from '../../domain/mcp.js';
@@ -43,6 +51,15 @@ export function normalizeServiceTier(tier: ServiceTier | undefined): ServiceTier
     throw new AgentConfigError(`Unknown service tier: ${String(tier)}`);
   }
   return tier;
+}
+
+/** Validates and copies a per-token price table. Omit it to disable cost calculation. */
+export function normalizeTokenPricing(pricing?: TokenPricing): TokenPricing | undefined {
+  if (pricing === undefined) return undefined;
+  if (!isTokenPricing(pricing)) {
+    throw new AgentConfigError('Invalid token pricing: input, cache, and output must be finite non-negative numbers');
+  }
+  return { ...pricing };
 }
 
 /** A positive finite number, rounded down; anything else is `undefined` (shared by the builder and the agent). */
@@ -376,6 +393,8 @@ export interface AgentConfig {
   autoSummary?: boolean;
   /** Local token estimator tuning (chars/token, per-message overhead) for the context meter. */
   tokenEstimator?: TokenEstimatorOptions;
+  /** Per-token prices used for request and aggregate cost reporting. Omit to disable cost calculation. */
+  tokenPricing?: TokenPricing;
   /** Legacy alias of `logging.level`. */
   logLevel?: LogLevel;
   apiKey?: string;
@@ -433,6 +452,7 @@ export interface AgentTemplate {
   summaryThresholdRatio?: number;
   autoSummary?: boolean;
   tokenEstimator?: TokenEstimatorOptions;
+  tokenPricing?: TokenPricing;
   logLevel?: LogLevel;
   promptCacheRetention?: 'in_memory' | '24h';
   reasoning?: ReasoningConfig;

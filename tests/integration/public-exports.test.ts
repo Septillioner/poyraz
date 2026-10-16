@@ -20,6 +20,9 @@ describe('public exports of the clean-builder work', () => {
     'resolveAgentPolicy',
     'resolveRateLimitConfig',
     'AgentConfigError',
+    'calculateTokenCost',
+    'isTokenPricing',
+    'normalizeTokenPricing',
   ])('exports %s', (name) => {
     expect((poyraz as Record<string, unknown>)[name]).toBeDefined();
   });

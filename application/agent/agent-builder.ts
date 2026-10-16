@@ -5,6 +5,7 @@ import {
   chainContinuation,
   normalizeReasoning,
   normalizeServiceTier,
+  normalizeTokenPricing,
   type AgentTemplate,
   type ContinuationPolicy,
   type LoggingConfig,
@@ -24,7 +25,7 @@ import { DEFAULT_OLLAMA_HOST } from '../../domain/model-profile.js';
 import { ToolDefinition } from '../../tools/index.js';
 import { createToolRegistry, toolRegistry, ToolPresetName } from '../../tools/core/registry.js';
 import { LogLevel, type FileLoggingConfig } from '../../shared/logger.js';
-import type { LLMProvider, ReasoningConfig, ServiceTier } from '../../domain/llm.js';
+import type { LLMProvider, ReasoningConfig, ServiceTier, TokenPricing } from '../../domain/llm.js';
 import type { ToolRoutingPolicy } from '../chat/tool-policy.js';
 import type { TokenEstimatorOptions } from '../context/token-estimate.js';
 import { normalizeSummaryThreshold } from '../context/summary-settings.js';
@@ -257,6 +258,12 @@ export class AgentBuilder {
     return this;
   }
 
+  /** Sets per-token input/cache/output prices for provider-reported usage cost calculations. */
+  TokenPricing(pricing?: TokenPricing): this {
+    this.config.tokenPricing = normalizeTokenPricing(pricing);
+    return this;
+  }
+
   /** Shortcut for `Summarization({ enabled })`. Off by default. */
   AutoSummary(enabled: boolean = true): this {
     this.config.autoSummary = enabled;
@@ -465,6 +472,7 @@ export class AgentBuilder {
     if (json.autoSummary !== undefined) this.AutoSummary(json.autoSummary);
     if (json.summarization !== undefined) this.Summarization(json.summarization);
     if (json.tokenEstimator) this.TokenEstimator(json.tokenEstimator);
+    if (json.tokenPricing !== undefined) this.TokenPricing(json.tokenPricing);
     if (json.reasoning) this.Reasoning(json.reasoning);
     if (json.serviceTier) this.ServiceTier(json.serviceTier);
     if (json.systemPrompt) this.SystemPrompt(json.systemPrompt);

@@ -7,6 +7,7 @@ export {
   DEFAULT_RATE_LIMIT_MAX_WAITS,
   resolveAgentPolicy,
   resolveRateLimitConfig,
+  normalizeTokenPricing,
 } from './application/agent/config.js';
 export type {
   AgentMcpConfig,
@@ -178,6 +179,9 @@ export type {
   ReasoningEffort,
   ServiceTier,
   TokenUsage,
+  TokenPricing,
+  TokenCost,
+  TokenCostTotals,
   ToolCall,
   AgentError,
   RateLimitDelaySource,
@@ -185,6 +189,7 @@ export type {
   RateLimitPolicy,
   RateLimitWait,
 } from './domain/llm.js';
+export { calculateTokenCost, isTokenPricing } from './domain/llm.js';
 
 export {
   findModelProfile,

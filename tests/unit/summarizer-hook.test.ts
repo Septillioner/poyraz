@@ -158,6 +158,34 @@ describe('agent: OnSummarized / summarization.onSummarized', () => {
     const cleared = new AgentBuilder().Provider(mockLLM([{ content: 'ok' }])).OnSummarized(hook).OnSummarized().Build();
     expect(cleared.getConfig().summarization).toBeUndefined();
   });
+
+  it('includes provider-reported summary usage in configured cost totals', async () => {
+    const agent = new AgentBuilder()
+      .Provider(
+        mockLLM([
+          {
+            content: 'the gist',
+            usage: { promptTokens: 80, cachedTokens: 30, completionTokens: 10, totalTokens: 90 },
+          },
+        ])
+      )
+      .ContextLimit(10)
+      .TokenPricing({ input: 0.01, cache: 0.002, output: 0.03 })
+      .Build();
+    agent.loadHistory(history());
+
+    await agent.summarize();
+
+    expect(agent.getUsageCosts()?.current).toMatchObject({
+      inputTokens: 50,
+      cacheTokens: 30,
+      outputTokens: 10,
+      inputCost: 0.5,
+      cacheCost: 0.06,
+      outputCost: 0.3,
+    });
+    expect(agent.getUsageCosts()?.current.totalCost).toBeCloseTo(0.86);
+  });
 });
 
 describe('summarizing a history shorter than the kept tail', () => {

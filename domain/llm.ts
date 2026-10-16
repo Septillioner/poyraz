@@ -109,6 +109,79 @@ export interface TokenUsage {
   cachedTokens?: number;
 }
 
+/** Per-token prices for a model request. `cache` applies to the cached part of `promptTokens`. */
+export interface TokenPricing {
+  input: number;
+  cache: number;
+  output: number;
+}
+
+/** A request's billable token split and its cost at a particular `TokenPricing`. */
+export interface TokenCost {
+  /** Uncached prompt tokens: `promptTokens - cachedTokens`. */
+  inputTokens: number;
+  /** Cached prompt tokens. This is always at most `promptTokens`. */
+  cacheTokens: number;
+  /** Completion tokens reported by the provider. */
+  outputTokens: number;
+  inputCost: number;
+  cacheCost: number;
+  outputCost: number;
+  totalCost: number;
+}
+
+/** Current-turn and whole-session costs using one price table. */
+export interface TokenCostTotals {
+  current: TokenCost;
+  session: TokenCost;
+}
+
+function nonNegativeFinite(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+/** True only for a complete, finite, non-negative per-token price table. */
+export function isTokenPricing(value: unknown): value is TokenPricing {
+  if (!value || typeof value !== 'object') return false;
+  const pricing = value as Partial<TokenPricing>;
+  return (
+    typeof pricing.input === 'number' &&
+    Number.isFinite(pricing.input) &&
+    pricing.input >= 0 &&
+    typeof pricing.cache === 'number' &&
+    Number.isFinite(pricing.cache) &&
+    pricing.cache >= 0 &&
+    typeof pricing.output === 'number' &&
+    Number.isFinite(pricing.output) &&
+    pricing.output >= 0
+  );
+}
+
+/**
+ * Calculates a provider-reported request's cost. Cached tokens are a subset of
+ * prompt tokens, so only the remainder is charged at the normal input price.
+ * `totalTokens` is intentionally not used: providers may define it differently,
+ * while prompt + cache + completion is the billing contract.
+ */
+export function calculateTokenCost(usage: TokenUsage, pricing: TokenPricing): TokenCost {
+  const promptTokens = nonNegativeFinite(usage.promptTokens);
+  const cacheTokens = Math.min(promptTokens, nonNegativeFinite(usage.cachedTokens));
+  const inputTokens = promptTokens - cacheTokens;
+  const outputTokens = nonNegativeFinite(usage.completionTokens);
+  const inputCost = inputTokens * pricing.input;
+  const cacheCost = cacheTokens * pricing.cache;
+  const outputCost = outputTokens * pricing.output;
+  return {
+    inputTokens,
+    cacheTokens,
+    outputTokens,
+    inputCost,
+    cacheCost,
+    outputCost,
+    totalCost: inputCost + cacheCost + outputCost,
+  };
+}
+
 export interface ChatResponse {
   content: string;
   tool_calls?: ToolCall[];

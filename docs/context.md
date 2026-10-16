@@ -59,8 +59,25 @@ Everything is off or unset by default: with no `ContextLimit`, no `ContextWindow
 | `AutoSummary(enabled?)` | `autoSummary` | Legacy shortcut for `summarization.enabled` (`summarization.enabled` wins when both are set) |
 | `AutoSummaryThreshold(ratio)` | `summaryThresholdRatio` | Legacy shortcut for `summarization.thresholdRatio` (`summarization.thresholdRatio` wins when both are set). Clamped to 0.5..0.95. Default 0.8 |
 | `TokenEstimator(options)` | `tokenEstimator` | `TokenEstimatorOptions`: `charsPerToken` (default 3.5, clamped to 1..8) and `messageOverheadTokens` (default 4) |
+| `TokenPricing({ input, cache, output })` | `tokenPricing` | Per-token prices for provider-reported input, cached input and output usage; omitted disables cost calculation |
 
-`AgentTemplate` and `FromJSON` accept `contextWindowTokens`, `summaryThresholdRatio`, `contextLimit`, `autoSummary`, `summarization` and `tokenEstimator`.
+`AgentTemplate` and `FromJSON` accept `contextWindowTokens`, `summaryThresholdRatio`, `contextLimit`, `autoSummary`, `summarization`, `tokenEstimator` and `tokenPricing`.
+
+## Request cost
+
+Set per-token prices when building an agent (or pass `tokenPricing` in `AgentConfig` / `AgentTemplate`) to calculate costs only from provider-reported request usage. Prices are in the unit chosen by the host, such as USD per token.
+
+```ts
+const agent = new AgentBuilder()
+  .Provider(provider)
+  .TokenPricing({ input: 0.0000025, cache: 0.00000125, output: 0.00001 })
+  .Build();
+
+await agent.chat('Hello');
+console.log(agent.getUsageCosts()?.current.totalCost);
+```
+
+`cachedTokens` is a subset of `promptTokens`, so each request is charged as `(promptTokens - cachedTokens) * input + cachedTokens * cache + completionTokens * output`. `totalTokens` is deliberately not used for billing. `getContextRecords()` includes a `cost` snapshot for each completed context request, calculated with the table active when that usage arrived; summary-request usage is also included in the aggregates when the provider reports it. `getUsageCosts()` returns current-turn and session aggregates using the active table. `setTokenPricing()` changes the table for future records, while `getTokenPricing()` returns a copy of the active table.
 
 ## Summarization
 
@@ -134,6 +151,8 @@ Defaults live in one place (`application/context/summary-settings.ts`) and are e
 | `getContextReal()` | `ContextRealSnapshot \| undefined` | Last completed request: `seq`, `at`, `usage`, per-category split scaled to `promptTokens`, `total`, the `estimate` and the `drift` |
 | `getContextDrift()` | `ContextDrift \| undefined` | Estimate minus real for the last completed request: `tokens`, `ratio`, `percent`. Positive means the estimate ran high |
 | `getContextRecords()` | `ContextRequestRecord[]` | Last 20 requests, newest last: `seq`, `at`, `model`, `estimate`, `real?`, `drift?` |
+| `getUsageCosts()` | `TokenCostTotals \| undefined` | Current-turn and session costs from provider-reported usage; `undefined` until token pricing is configured |
+| `getTokenPricing()` / `setTokenPricing(pricing?)` | `TokenPricing \| undefined` / `void` | Reads or changes the active per-token input/cache/output price table |
 | `getTokenEstimator()` | `TokenEstimator` | The estimator this agent uses |
 | `calibrateEstimator(weight?)` | `number \| undefined` | Moves `charsPerToken` toward the last real request (moving average, default weight 0.5). Returns the new ratio, or `undefined` before the first completed request. Never runs on its own |
 | `getContextUsage()` | `TokenUsage \| undefined` | Raw usage of the last model request of the current turn. Readable after an aborted turn |

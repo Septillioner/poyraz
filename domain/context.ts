@@ -1,4 +1,4 @@
-import type { ChatMessage, TokenUsage } from './llm.js';
+import type { ChatMessage, TokenCost, TokenUsage } from './llm.js';
 
 /**
  * Context categories. Every piece of a model request belongs to exactly one of
@@ -97,6 +97,8 @@ export interface ContextRequestRecord {
   estimate: ContextEstimate;
   real?: TokenUsage;
   drift?: ContextDrift;
+  /** Request cost calculated when provider usage arrived, if token pricing was configured. */
+  cost?: TokenCost;
 }
 
 /** Provider-reported prompt size broken down by category (estimate shares scaled to the real total). */
