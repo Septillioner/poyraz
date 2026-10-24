@@ -16,6 +16,7 @@ import type { FileLoggingConfig, LogLevel } from '../../shared/logger.js';
 import type { ToolDefinition } from '../../tools/core/types.js';
 import type { ToolRoutingPolicy } from '../chat/tool-policy.js';
 import type { TokenEstimatorOptions } from '../context/token-estimate.js';
+import type { HookRegistry } from './hooks.js';
 
 export type { ToolRoutingPolicy };
 
@@ -420,6 +421,8 @@ export interface AgentConfig {
   /** Longest tool result in UTF-8 bytes; same cut and note. Omitted -> no limit. */
   toolResultMaxBytes?: number;
   continuation?: ContinuationPolicy;
+  /** In-process lifecycle hooks. Omitted means no hooks run. Not JSON-serializable. */
+  hooks?: HookRegistry;
   summarization?: SummarizationConfig;
   skillTool?: SkillToolConfig;
   mcp?: AgentMcpConfig;

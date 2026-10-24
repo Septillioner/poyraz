@@ -18,6 +18,7 @@ import {
   type OnSummarizedHook,
   type SummarizationConfig,
 } from './config.js';
+import type { HookRegistry } from './hooks.js';
 import { normalizeSkills } from '../../tools/definitions/skills.js';
 import type { ErrorBreakerMode, ResponseGate } from '../../domain/agent-policy.js';
 import type { ModelProfile } from '../../domain/model-profile.js';
@@ -357,6 +358,15 @@ export class AgentBuilder {
    */
   Continuation(...policies: ContinuationPolicy[]): this {
     this.config.continuation = policies.length > 0 ? chainContinuation(...policies) : undefined;
+    return this;
+  }
+
+  /**
+   * Registers lifecycle hooks. The registry object is kept as given, so the caller and the
+   * agent share it. Calling this again replaces the previous registry. Default: none.
+   */
+  Hooks(registry: HookRegistry): this {
+    this.config.hooks = registry;
     return this;
   }
 

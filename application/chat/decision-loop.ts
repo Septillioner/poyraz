@@ -19,10 +19,12 @@ import type {
   ContinuationPolicy,
   SameToolBreakerConfig,
 } from '../agent/config.js';
+import { runHooks, type HookRegistry } from '../agent/hooks.js';
 
 /** Default of `sameToolBreaker.limit`: consecutive rounds led by the same tool before the notice fires. */
 export const CONSECUTIVE_SAME_TOOL_LIMIT = 3;
 export const CONSECUTIVE_SAME_ERROR_LIMIT = 2;
+const TOOL_CALL_DENIED = 'Tool call denied.';
 
 /**
  * Same-error circuit breaker mode, owned by the host policy (`AgentPolicy.errorBreaker`).
@@ -79,6 +81,8 @@ export interface DecisionLoopDeps {
   progressTools?: readonly string[];
   /** `config.continuation`. Consulted after every accepted tool-less reply; default: none (the reply ends the turn). */
   continuation?: ContinuationPolicy;
+  /** Lifecycle hooks. Omitted or empty means the tool call runs as before. */
+  hooks?: HookRegistry;
 }
 
 /** What goes to the provider for one round; the minimum the loop needs from a request compiler. */
@@ -412,24 +416,61 @@ export async function runDecisionLoop(
         const toolCallId = toolCall.id || `call_${round}_${toolCall.function.name}`;
         const toolName = toolRegistry.resolveAlias(toolCall.function.name);
         const toolArgs = parseToolCallArgs(toolCall.function.arguments);
+        const preTool = deps.hooks?.PreToolUse?.length
+          ? await runHooks(deps.hooks, {
+            hook_event_name: 'PreToolUse',
+            session_id: handlers.getSessionId?.(),
+            tool_name: toolName,
+            tool_input: toolArgs,
+            tool_use_id: toolCallId,
+          }, { signal: handlers.signal })
+          : undefined;
+        if (preTool?.blocked) {
+          const reason = preTool.reason ?? TOOL_CALL_DENIED;
+          handlers.addMessage({ role: 'tool', content: reason, tool_call_id: toolCallId });
+          handlers.onEvent?.({
+            type: 'tool.call.result',
+            toolCallId,
+            toolName,
+            content: reason,
+            ok: false,
+          });
+          handlers.onEvent?.({ type: 'tool.call.end', toolCallId });
+          continue;
+        }
+        const args = preTool?.updatedInput ?? toolArgs;
+        const call = preTool?.updatedInput
+          ? { ...toolCall, id: toolCallId, function: { ...toolCall.function, arguments: args } }
+          : { ...toolCall, id: toolCallId };
 
         handlers.onEvent?.({
           type: 'tool.call.start',
           toolCallId,
           toolName,
-          args: toolArgs,
+          args,
         });
 
         const toolOutcome = await executeToolCall(
           toolDefs,
           policyGuard,
-          { ...toolCall, id: toolCallId },
+          call,
           handlers.buildToolContext(),
           { repair: deps.repair, resultLimit: deps.toolResultLimit }
         );
 
         const parsedError = tryParseToolError(toolOutcome.message.content);
         const ok = !parsedError;
+        const postEvent = ok ? 'PostToolUse' : 'PostToolUseFailure';
+        if (deps.hooks?.[postEvent]?.length) {
+          await runHooks(deps.hooks, {
+            hook_event_name: postEvent,
+            session_id: handlers.getSessionId?.(),
+            tool_name: toolName,
+            tool_input: args,
+            tool_use_id: toolCallId,
+            tool_response: toolOutcome.message.content,
+          }, { signal: handlers.signal });
+        }
 
         handlers.onEvent?.({
           type: 'tool.call.result',

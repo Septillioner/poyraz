@@ -70,6 +70,7 @@ import {
   resolveMaxToolRounds,
   resolveRepeatCallLimit,
 } from './tool-resolver.js';
+import { runHooks } from './hooks.js';
 import {
   AgentConfigError,
   normalizeTokenPricing,
@@ -834,6 +835,13 @@ export class Agent {
 
   /** Compact older turns into a single rolling user summary message. */
   async summarize(handlers?: ChatHandlers): Promise<void> {
+    if (this.config.hooks?.PreCompact?.length) {
+      const compact = await runHooks(this.config.hooks, {
+        hook_event_name: 'PreCompact',
+        session_id: this.sessionId,
+      }, { signal: this.activeAbortSignal });
+      if (compact.blocked) return;
+    }
     const summarization = this.config.summarization;
     await summarizeHistory(this.context, this.provider, this.model, handlers, this.config.serviceTier, {
       prompt: summarization?.prompt,
@@ -845,6 +853,12 @@ export class Agent {
         : undefined,
       onUsage: (usage) => this.recordExternalUsage(usage),
     });
+    if (this.config.hooks?.PostCompact?.length) {
+      await runHooks(this.config.hooks, {
+        hook_event_name: 'PostCompact',
+        session_id: this.sessionId,
+      }, { signal: this.activeAbortSignal });
+    }
     // The last real request described the history from before the summary.
     this.lastRealRecord = undefined;
   }
@@ -926,6 +940,7 @@ export class Agent {
           progressTools: this.config.progressTools,
           continuation: this.config.continuation,
           toolResultLimit: { maxChars: this.config.toolResultMaxChars, maxBytes: this.config.toolResultMaxBytes },
+          hooks: this.config.hooks,
         },
         this.tools,
         policyGuard,
@@ -964,6 +979,12 @@ export class Agent {
       if (this.context.getMessages() !== historyBeforeManagement) this.lastRealRecord = undefined;
 
       result = { content: loopResult.content, usage: this.stats.getCurrent() };
+      if (!handlers?.signal?.aborted && this.config.hooks?.Stop?.length) {
+        await runHooks(this.config.hooks, {
+          hook_event_name: 'Stop',
+          session_id: this.sessionId,
+        }, { signal: handlers?.signal });
+      }
       // Billing includes every tool round; context occupancy is the last request only.
       return {
         ...result,

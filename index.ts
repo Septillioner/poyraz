@@ -9,6 +9,18 @@ export {
   resolveRateLimitConfig,
   normalizeTokenPricing,
 } from './application/agent/config.js';
+export { runHooks } from './application/agent/hooks.js';
+export type {
+  HookCallback,
+  HookContext,
+  HookEventName,
+  HookInput,
+  HookJSONOutput,
+  HookMatcher,
+  HookOutcome,
+  HookRegistry,
+  PermissionDecision,
+} from './application/agent/hooks.js';
 export type {
   AgentMcpConfig,
   AgentTemplate,
