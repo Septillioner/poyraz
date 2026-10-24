@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-24
+
+### Added
+
+- Lifecycle hooks on `AgentBuilder` / `Agent`: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `UserPromptSubmit`, `Stop`, `Interrupt`, `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `PreCompact`, and `PostCompact`. A matcher is a regular expression (tool name or subagent id). Hook output can allow, ask, deny, replace tool input, or block. `runHooks` runs the chain.
+
+## [1.1.2] - 2026-10-16
+
 ### Added
 
 - Policy: `AgentPolicy.allowedTools` entries may be `*` patterns (`'mcp_*'`), `AgentPolicy.deniedTools` / `DeniedTools(...names)` (deny wins over allow) and `AgentPolicy.maxToolRounds` (precedence: top-level `maxToolRounds` > policy > `routingPolicy` > `options.max_tool_rounds`). New helpers `matchesToolPattern`, `matchesAnyToolPattern`. See [docs/policy.md](docs/policy.md#tool-name-patterns).
