@@ -1,4 +1,4 @@
-import type { AgentError, RateLimitDelaySource, RateLimitNotice, TokenUsage } from './llm.js';
+import type { AgentError, MessageImage, RateLimitDelaySource, RateLimitNotice, TokenUsage } from './llm.js';
 
 export type LifecyclePhase = 'thinking' | 'summarizing' | 'summarized';
 
@@ -50,6 +50,7 @@ export type AgentStreamEvent =
     };
 
 export interface ChatHandlers {
+  images?: MessageImage[];
   onEvent?: (event: AgentStreamEvent) => void;
   signal?: AbortSignal;
 }

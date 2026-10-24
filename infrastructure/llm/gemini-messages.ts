@@ -100,7 +100,10 @@ export function toGeminiContents(messages: ChatMessage[]): {
 
   for (const msg of conversation) {
     if (msg.role === 'user') {
-      contents.push({ role: 'user', parts: [{ text: msg.content }] });
+      contents.push({ role: 'user', parts: [
+        ...(msg.content ? [{ text: msg.content }] : []),
+        ...(msg.images ?? []).map((image) => ({ inlineData: { mimeType: image.mimeType, data: image.data } })),
+      ] });
       continue;
     }
     if (msg.role === 'assistant') {

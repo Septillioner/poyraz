@@ -61,9 +61,16 @@ export interface ChatMessageProviderMeta {
   };
 }
 
+/** Inline image input. Data is raw base64, without a data-URL prefix. */
+export interface MessageImage {
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+  data: string;
+}
+
 export interface ChatMessage {
   role: string;
   content: string;
+  images?: MessageImage[];
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   providerMeta?: ChatMessageProviderMeta;

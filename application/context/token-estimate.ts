@@ -17,7 +17,7 @@ export interface TokenEstimatorOptions {
 export interface CalibrationSample {
   /** Characters the estimate was computed from (excluding framing overhead). */
   chars: number;
-  /** Framing tokens that were part of the estimate. */
+  /** Non-text tokens (framing and estimated images) that were part of the estimate. */
   overheadTokens?: number;
   /** Provider-reported prompt tokens for the same request. */
   realTokens: number;

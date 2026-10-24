@@ -184,6 +184,7 @@ export type { CreateProviderOptions } from './infrastructure/llm/create-provider
 export { OllamaProvider, OpenAIProvider } from './infrastructure/llm/providers.js';
 export type {
   ChatMessage,
+  MessageImage,
   ChatOptions,
   ChatResponse,
   LLMProvider,

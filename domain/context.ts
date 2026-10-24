@@ -55,7 +55,7 @@ export interface MessageContextMeta {
   category: ContextCategory;
   /** Characters per category; an assistant tool-call message spans several. */
   chars: Partial<Record<ContextCategory, number>>;
-  /** Fixed per-message framing cost, charged to `category`. */
+  /** Fixed framing and estimated image cost, charged to `category`. */
   overheadTokens: number;
   /** Token estimate per category at storage time (estimator in effect then). */
   tokens: Partial<Record<ContextCategory, number>>;
@@ -76,7 +76,7 @@ export interface ContextEstimate {
   total: number;
   /** Characters behind the estimate; used to calibrate chars/token. */
   chars: number;
-  /** Fixed per-message framing tokens included in `total`. */
+  /** Fixed framing and estimated image tokens included in `total`. */
   overheadTokens: number;
 }
 

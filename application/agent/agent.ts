@@ -909,7 +909,7 @@ export class Agent {
     /** Set when a `ContinuationPolicy` is configured: how many times it continued, and why it stopped. */
     continuation?: ContinuationOutcome;
   }> {
-    this.context.addMessage({ role: 'user', content: userInput });
+    this.context.addMessage({ role: 'user', content: userInput, ...(handlers?.images?.length ? { images: handlers.images.map((image) => ({ ...image })) } : {}) });
     this.stats.resetCurrent();
     this.lastRequestUsage = undefined;
     this.activeAbortSignal = handlers?.signal;

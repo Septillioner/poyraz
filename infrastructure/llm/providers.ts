@@ -34,7 +34,10 @@ export class OllamaProvider implements LLMProvider {
     const response = await this.ollama.chat({
       // Ollama has no default model; an empty name makes the server answer with its own clear error.
       model: options.model ?? '',
-      messages: sanitizeToolPairing(options.messages) as any,
+      messages: sanitizeToolPairing(options.messages).map(({ images, ...message }) => ({
+        ...message,
+        ...(images?.length ? { images: images.map((image) => image.data) } : {}),
+      })) as any,
       options: options.options,
       // An empty list is never sent: the key is left out.
       tools: options.tools?.length ? options.tools : undefined,
@@ -343,7 +346,12 @@ export class OpenAIProvider implements LLMProvider {
       ...(options.model ? { model: options.model } : {}),
       messages: sanitizeToolPairing(options.messages).map((msg) => ({
         role: msg.role,
-        content: msg.content,
+        content: msg.role === 'user' && msg.images?.length
+          ? [
+              ...(msg.content ? [{ type: 'text', text: msg.content }] : []),
+              ...msg.images.map((image) => ({ type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } })),
+            ]
+          : msg.content,
         tool_call_id: msg.tool_call_id,
         tool_calls: msg.tool_calls?.map((tc) => ({
           ...tc,

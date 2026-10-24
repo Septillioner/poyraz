@@ -158,7 +158,12 @@ export function toResponsesInput(messages: ChatMessage[]): ResponsesRequestParts
 
     input.push({
       role: msg.role,
-      content: msg.content ?? '',
+      content: msg.role === 'user' && msg.images?.length
+        ? [
+            ...(msg.content ? [{ type: 'input_text', text: msg.content }] : []),
+            ...msg.images.map((image) => ({ type: 'input_image', image_url: `data:${image.mimeType};base64,${image.data}`, detail: 'auto' })),
+          ]
+        : msg.content ?? '',
     });
   }
 

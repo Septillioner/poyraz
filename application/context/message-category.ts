@@ -98,15 +98,19 @@ export function buildMessageMeta(
     if (extra > 0) chars.providerMeta = extra;
   }
 
+  // Image costs vary by provider and resolution. Use a bounded local estimate;
+  // never count base64 as text. Completed requests use provider-reported usage.
+  const overheadTokens = estimator.messageOverheadTokens + (message.images?.length ?? 0) * 1536;
+
   const tokens: Partial<Record<ContextCategory, number>> = {};
   const totals = emptyCategoryTokens();
   for (const [key, value] of Object.entries(chars) as [ContextCategory, number][]) {
     totals[key] = estimator.tokensForChars(value);
   }
-  totals[category] += estimator.messageOverheadTokens;
+  totals[category] += overheadTokens;
   for (const key of Object.keys(totals) as ContextCategory[]) {
     if (totals[key] > 0) tokens[key] = totals[key];
   }
 
-  return { category, chars, overheadTokens: estimator.messageOverheadTokens, tokens };
+  return { category, chars, overheadTokens, tokens };
 }
