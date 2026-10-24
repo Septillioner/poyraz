@@ -10,10 +10,16 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - Lifecycle hooks on `AgentBuilder` / `Agent`: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `UserPromptSubmit`, `Stop`, `Interrupt`, `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `PreCompact`, and `PostCompact`. A matcher is a regular expression (tool name or subagent id). Hook output can allow, ask, deny, replace tool input, or block. `runHooks` runs the chain.
 
+### Changed
+
+- Reorganized the README with a clearer project overview, package badges, tool and streaming examples, provider information, and a documentation guide.
+- Synchronized the package and lockfile versions; the lockfile previously still identified the root package as `1.0.0`.
+
 ## [1.1.2] - 2026-10-16
 
 ### Added
 
+- Token pricing and cost calculation for agent requests.
 - Policy: `AgentPolicy.allowedTools` entries may be `*` patterns (`'mcp_*'`), `AgentPolicy.deniedTools` / `DeniedTools(...names)` (deny wins over allow) and `AgentPolicy.maxToolRounds` (precedence: top-level `maxToolRounds` > policy > `routingPolicy` > `options.max_tool_rounds`). New helpers `matchesToolPattern`, `matchesAnyToolPattern`. See [docs/policy.md](docs/policy.md#tool-name-patterns).
 - Summarization hook: `summarization.onSummarized` / `OnSummarized(hook?)` runs after each summary with a `SummarizedContext` (summary text, replaced / kept message counts, token estimate before / after, history snapshot, session id); the text it returns is appended to the summary message. Off by default. See [docs/context.md](docs/context.md#after-summary-hook).
 - Runtime settings on `Agent`: `getReasoning` / `setReasoning`, `getServiceTier` / `setServiceTier`, `getContextWindow` / `setContextWindow`, `getMaxToolRounds` / `setMaxToolRounds`. They apply from the next turn (a running turn keeps its values), `getConfig()` reflects them, and invalid values throw `AgentConfigError` ([Agent API](docs/agent-api.md#runtime-settings)). The agent now works on a copy of the config object it is given.
